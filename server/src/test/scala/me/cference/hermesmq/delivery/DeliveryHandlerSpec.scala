@@ -30,12 +30,13 @@ final class DeliveryHandlerSpec extends AnyFunSuite with Matchers with ScalaFutu
       calls += ((id, command)); Future.successful(CommandReply.Accepted)
     def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(None)
 
-  test("delivers a message to every subscription on its topic") {
-    val index = TopicSubscriptionsIndex()
-    index.add(tid("orders"), sid("s1"))
-    index.add(tid("orders"), sid("s2"))
+  test("delivers a message to every subscription the read model returns (incl. other nodes')") {
+    val repo = InMemoryTopicSubscriptionsRepository()
+    // s1 and s2 are in the shared read model — as if created on different nodes.
+    repo.add(tid("orders"), sid("s1")).futureValue
+    repo.add(tid("orders"), sid("s2")).futureValue
     val service = CapturingService()
-    val handler = DeliveryHandler(index, service, deadline)
+    val handler = DeliveryHandler(repo, service, deadline)
 
     handler.deliver(tid("orders"), message).futureValue
 
@@ -48,7 +49,7 @@ final class DeliveryHandlerSpec extends AnyFunSuite with Matchers with ScalaFutu
 
   test("delivers nowhere when the topic has no subscriptions") {
     val service = CapturingService()
-    val handler = DeliveryHandler(TopicSubscriptionsIndex(), service, deadline)
+    val handler = DeliveryHandler(InMemoryTopicSubscriptionsRepository(), service, deadline)
     handler.deliver(tid("orders"), message).futureValue
     service.calls shouldBe empty
   }
