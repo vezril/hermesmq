@@ -8,7 +8,6 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.time.Instant
-import scala.concurrent.duration.*
 
 /** Verifies domain events serialize with the explicit JSON serializer and that
   * Java serialization is disabled. Loads the real `application.conf` so the
@@ -31,7 +30,7 @@ final class EventSerializationSpec
   private val subId    = SubscriptionId.from("sub-1").toOption.get
   private val ackId    = AckId.from("ack-1").toOption.get
   private val msgId    = MessageId.from("m-1").toOption.get
-  private val deadline = AckDeadline.from(30.seconds).toOption.get
+  private val deadline = Instant.parse("2026-07-07T12:00:30Z")
   private val message = Message
     .from(msgId, "hi".getBytes, Map("k" -> "v"), Instant.parse("2026-07-07T00:00:00Z"))
     .toOption
@@ -66,8 +65,8 @@ final class EventSerializationSpec
         SubscriptionEvent.SubscriptionCreated(subId, topicId)
     }
     "round-trip MessageDelivered" in {
-      roundTrip[SubscriptionEvent](SubscriptionEvent.MessageDelivered(ackId, message, deadline)) shouldBe
-        SubscriptionEvent.MessageDelivered(ackId, message, deadline)
+      roundTrip[SubscriptionEvent](SubscriptionEvent.MessageDelivered(ackId, message)) shouldBe
+        SubscriptionEvent.MessageDelivered(ackId, message)
     }
     "round-trip MessageAcknowledged" in {
       roundTrip[SubscriptionEvent](SubscriptionEvent.MessageAcknowledged(ackId)) shouldBe
@@ -76,6 +75,18 @@ final class EventSerializationSpec
     "round-trip AckDeadlineModified" in {
       roundTrip[SubscriptionEvent](SubscriptionEvent.AckDeadlineModified(ackId, deadline)) shouldBe
         SubscriptionEvent.AckDeadlineModified(ackId, deadline)
+    }
+    "round-trip MessageLeased" in {
+      val e = SubscriptionEvent.MessageLeased(List(ackId), deadline)
+      roundTrip[SubscriptionEvent](e) shouldBe e
+    }
+    "round-trip AckDeadlineExpired" in {
+      val e = SubscriptionEvent.AckDeadlineExpired(ackId, 2)
+      roundTrip[SubscriptionEvent](e) shouldBe e
+    }
+    "round-trip MessageDeadLettered" in {
+      val e = SubscriptionEvent.MessageDeadLettered(ackId, message, 5)
+      roundTrip[SubscriptionEvent](e) shouldBe e
     }
   }
 

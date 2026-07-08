@@ -2,9 +2,8 @@ package me.cference.hermesmq
 
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
-import me.cference.hermesmq.config.{DbConfig, ServiceConfig}
-import me.cference.hermesmq.delivery.{DeliveryHandler, DeliveryProjection, JdbcTopicSubscriptionsRepository, SubscriptionIndexProjection}
-import me.cference.hermesmq.domain.AckDeadline
+import me.cference.hermesmq.config.{DbConfig, RedeliveryConfig, ServiceConfig}
+import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection}
 import me.cference.hermesmq.http.{HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
 import me.cference.hermesmq.persistence.PersistenceHealth
 import org.apache.pekko.actor.typed.ActorSystem
@@ -26,23 +25,22 @@ import scala.util.{Failure, Success}
   */
 object Main:
 
-  private val DefaultAckDeadline = AckDeadline.from(30.seconds).toOption.get
-
   def main(args: Array[String]): Unit =
     val rawConfig = ConfigFactory.load()
 
     val loaded =
       for
-        serviceConfig <- ServiceConfig.from(rawConfig)
-        dbConfig      <- DbConfig.from(rawConfig)
-      yield (serviceConfig, dbConfig)
+        serviceConfig    <- ServiceConfig.from(rawConfig)
+        dbConfig         <- DbConfig.from(rawConfig)
+        redeliveryConfig <- RedeliveryConfig.from(rawConfig)
+      yield (serviceConfig, dbConfig, redeliveryConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, dbConfig)) =>
+      case Right((serviceConfig, dbConfig, redeliveryConfig)) =>
         val persistenceHealth = PersistenceHealth(dbConfig)
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
@@ -55,24 +53,49 @@ object Main:
           TopicSharding.init(sharding)
           SubscriptionSharding.init(sharding)
           val topicService        = ShardedTopicService(sharding)
-          val subscriptionService = ShardedSubscriptionService(sharding)
+          val subscriptionService = ShardedSubscriptionService(sharding, redeliveryConfig.ackDeadline)
 
-          // Durable, cluster-shared topic→subscriptions read model.
+          // Durable, cluster-shared read models.
           val subscriptionsRepo = JdbcTopicSubscriptionsRepository(dbConfig)
+          val leaseRepo         = JdbcOutstandingLeaseRepository(dbConfig)
 
-          // Two single cluster-wide projections: maintain the index, and fan out.
+          // Single cluster-wide projections: maintain the index, fan out deliveries,
+          // track outstanding leases, and route dead-lettered messages.
           ShardedDaemonProcess(ctx.system).init(
             name = "subscription-index-projection",
             numberOfInstances = 1,
             behaviorFactory = (_: Int) => ProjectionBehavior(SubscriptionIndexProjection(ctx.system, dbConfig, subscriptionsRepo)),
             stopMessage = ProjectionBehavior.Stop
           )
-          val deliveryHandler = DeliveryHandler(subscriptionsRepo, subscriptionService, DefaultAckDeadline)
+          val deliveryHandler = DeliveryHandler(subscriptionsRepo, subscriptionService)
           ShardedDaemonProcess(ctx.system).init(
             name = "delivery-projection",
             numberOfInstances = 1,
             behaviorFactory = (_: Int) => ProjectionBehavior(DeliveryProjection(ctx.system, dbConfig, deliveryHandler)),
             stopMessage = ProjectionBehavior.Stop
+          )
+          ShardedDaemonProcess(ctx.system).init(
+            name = "lease-index-projection",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) => ProjectionBehavior(LeaseProjection(ctx.system, dbConfig, leaseRepo)),
+            stopMessage = ProjectionBehavior.Stop
+          )
+          ShardedDaemonProcess(ctx.system).init(
+            name = "dead-letter-projection",
+            numberOfInstances = 1,
+            behaviorFactory =
+              (_: Int) => ProjectionBehavior(DeadLetterProjection(ctx.system, dbConfig, topicService, redeliveryConfig.deadLetterTopic)),
+            stopMessage = ProjectionBehavior.Stop
+          )
+
+          // Single cluster-wide sweeper: expires overdue leases so unacked
+          // messages are redelivered (or dead-lettered at the attempt limit).
+          ShardedDaemonProcess(ctx.system).init(
+            name = "redelivery-sweeper",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) =>
+              RedeliverySweeper(leaseRepo, subscriptionService, redeliveryConfig.sweepInterval, redeliveryConfig.maxDeliveryAttempts),
+            stopMessage = RedeliverySweeper.Stop
           )
 
           val apiRoutes =

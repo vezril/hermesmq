@@ -108,3 +108,33 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         }
     }
   }
+
+  "POST /v1/subscriptions/{id}/modifyAckDeadline" should {
+    "extend a lease and report the ackId as modified (200)" in {
+      Post("/v1/subscriptions/s1/modifyAckDeadline", json("""{"ackIds":["ack-1"],"ackDeadlineSeconds":60}""")) ~>
+        routes(subs = subStub()) ~> check {
+          status shouldBe StatusCodes.OK
+          responseAs[String].parseJson.asJsObject.fields("modified").convertTo[List[String]] shouldBe List("ack-1")
+        }
+    }
+    "accept a zero deadline as a nack (200, modified)" in {
+      Post("/v1/subscriptions/s1/modifyAckDeadline", json("""{"ackIds":["ack-1"],"ackDeadlineSeconds":0}""")) ~>
+        routes(subs = subStub()) ~> check {
+          status shouldBe StatusCodes.OK
+          responseAs[String].parseJson.asJsObject.fields("modified").convertTo[List[String]] shouldBe List("ack-1")
+        }
+    }
+    "report an unknown ackId without failing the batch (200)" in {
+      Post("/v1/subscriptions/s1/modifyAckDeadline", json("""{"ackIds":["ack-1"],"ackDeadlineSeconds":60}""")) ~>
+        routes(subs = subStub(submitReply = CommandReply.Rejected(Rejection.UnknownAckId(ackId)))) ~> check {
+          status shouldBe StatusCodes.OK
+          responseAs[String].parseJson.asJsObject.fields("unknown").convertTo[List[String]] shouldBe List("ack-1")
+        }
+    }
+    "return 404 when the subscription does not exist" in {
+      Post("/v1/subscriptions/ghost/modifyAckDeadline", json("""{"ackIds":["ack-1"],"ackDeadlineSeconds":60}""")) ~>
+        routes(subs = subStub(pullReply = None)) ~> check {
+          status shouldBe StatusCodes.NotFound
+        }
+    }
+  }
