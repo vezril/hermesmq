@@ -2,10 +2,11 @@
 
 A single-node, event-sourced message broker built in Scala on [Apache Pekko](https://pekko.apache.org/).
 
-> **Status:** early scaffolding. This repository currently contains the build
-> tooling, CI/CD pipeline, and a runnable Pekko HTTP service exposing health
-> endpoints (no persistence yet). Broker functionality (topics, subscriptions,
-> persistence, gRPC) lands in later features.
+> **Status:** early development. This repository contains the build tooling and
+> CI/CD pipeline, a runnable Pekko HTTP service with health endpoints, the core
+> event-sourced domain (Topic/Subscription aggregates), and durable persistence
+> on a configurable database (PostgreSQL). The delivery path, projections/read
+> models, and the gRPC API land in later features.
 
 ## Prerequisites
 
@@ -13,6 +14,8 @@ A single-node, event-sourced message broker built in Scala on [Apache Pekko](htt
 |------|---------|-------|
 | JDK  | Temurin 21 | The CI/release pipeline pins Temurin 21. Newer JDKs work locally. |
 | sbt  | 1.10.7 | Pinned in [`project/build.properties`](project/build.properties); the launcher fetches it automatically. |
+| PostgreSQL | 16 | Required to **run** the service (see [Persistence](#persistence)); not needed to build or run the tests. |
+| Docker | any | Only for building the container image and the PostgreSQL integration test. |
 
 Scala itself (3.3 LTS) is resolved by sbt — no separate install needed.
 
@@ -46,7 +49,7 @@ The service starts a Pekko HTTP server (default `0.0.0.0:8080`) and exposes:
 |---------------------|------------|----------|
 | `GET /health`       | Liveness   | `200` with `{"status":"UP","service":"hermesmq","version":"…"}` |
 | `HEAD /health`      | Liveness   | `200`, no body (cheap probe) |
-| `GET /health/ready` | Readiness  | `200` once bound and ready; `503` while starting or draining |
+| `GET /health/ready` | Readiness  | `200` once bound **and** persistence is reachable; `503` otherwise |
 
 ```bash
 curl localhost:8080/health
@@ -62,13 +65,48 @@ Press `Ctrl-C` (or send `SIGTERM`) to shut down gracefully — readiness flips t
 Settings live in [`application.conf`](src/main/resources/application.conf) and
 can be overridden by environment variables:
 
-| Variable             | Default   | Description            |
-|----------------------|-----------|------------------------|
-| `HERMESMQ_HTTP_HOST` | `0.0.0.0` | HTTP bind host         |
-| `HERMESMQ_HTTP_PORT` | `8080`    | HTTP bind port (1–65535) |
+| Variable               | Default     | Description                  |
+|------------------------|-------------|------------------------------|
+| `HERMESMQ_HTTP_HOST`   | `0.0.0.0`   | HTTP bind host               |
+| `HERMESMQ_HTTP_PORT`   | `8080`      | HTTP bind port (1–65535)     |
+| `HERMESMQ_DB_HOST`     | `localhost` | PostgreSQL host              |
+| `HERMESMQ_DB_PORT`     | `5432`      | PostgreSQL port              |
+| `HERMESMQ_DB_NAME`     | `hermesmq`  | Database name                |
+| `HERMESMQ_DB_USER`     | `hermes`    | Database user                |
+| `HERMESMQ_DB_PASSWORD` | `hermes`    | Database password            |
 
 An invalid or out-of-range port fails fast at startup with a clear error and a
 non-zero exit code.
+
+## Persistence
+
+HermesMQ is event-sourced: Topic and Subscription aggregates are
+`EventSourcedBehavior` actors whose events are journaled via
+[pekko-persistence-jdbc](https://pekko.apache.org/docs/pekko-persistence-jdbc/current/).
+An accepted command is acknowledged **only after** its event is durably written,
+and a restart replays the journal to resume exactly where it left off. Events are
+journaled as explicit JSON (Java serialization is disabled).
+
+**PostgreSQL is the default backend.** Start one locally with the provided
+compose file (it applies the schema automatically):
+
+```bash
+docker compose up -d                 # Postgres on :5432 with the schema applied
+HERMESMQ_DB_PASSWORD=hermes sbt run   # service connects to it
+```
+
+The schema DDL lives at
+[`src/main/resources/schema/postgres.sql`](src/main/resources/schema/postgres.sql);
+apply it to any fresh database before first use. If the database is unreachable
+or the schema is missing, persistence fails loudly (the operation is never
+silently accepted-and-lost) and `GET /health/ready` reports `503`.
+
+Unit tests use an in-memory journal and need **no database**. The one PostgreSQL
+integration test is excluded from the default run; run it (with Docker) via:
+
+```bash
+sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec"
+```
 
 ## Docker
 
