@@ -15,8 +15,7 @@ import scala.concurrent.{ExecutionContext, Future}
   */
 final class DeliveryHandler(
     subscriptions: TopicSubscriptionsRepository,
-    deliverTo: SubscriptionService,
-    ackDeadline: AckDeadline
+    deliverTo: SubscriptionService
 )(using ExecutionContext):
 
   def deliver(topicId: TopicId, message: Message): Future[Unit] =
@@ -24,7 +23,7 @@ final class DeliveryHandler(
       Future
         .traverse(targets) { subscriptionId =>
           val ackId = DeliveryHandler.ackIdFor(subscriptionId, message.id)
-          deliverTo.submit(subscriptionId, SubscriptionCommand.RecordDelivery(ackId, message, ackDeadline))
+          deliverTo.submit(subscriptionId, SubscriptionCommand.RecordDelivery(ackId, message))
         }
         .map(_ => ())
     }

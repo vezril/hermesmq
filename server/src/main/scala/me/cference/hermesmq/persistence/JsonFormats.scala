@@ -19,6 +19,12 @@ object JsonFormats extends DefaultJsonProtocol:
         case JsString(s) => wrap(s).fold(e => deserializationError(e.message), identity)
         case other       => deserializationError(s"expected string id, got $other")
 
+  given JsonFormat[Instant] with
+    def write(i: Instant): JsValue = JsString(i.toString)
+    def read(json: JsValue): Instant = json match
+      case JsString(s) => Instant.parse(s)
+      case other       => deserializationError(s"expected ISO instant, got $other")
+
   given JsonFormat[TopicId]        = stringId(TopicId.from)(_.value)
   given JsonFormat[SubscriptionId] = stringId(SubscriptionId.from)(_.value)
   given JsonFormat[MessageId]      = stringId(MessageId.from)(_.value)
@@ -78,21 +84,37 @@ object JsonFormats extends DefaultJsonProtocol:
     def write(e: SubscriptionEvent): JsValue = e match
       case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId) =>
         JsObject("type" -> JsString("SubscriptionCreated"), "subscriptionId" -> subscriptionId.toJson, "topicId" -> topicId.toJson)
-      case SubscriptionEvent.MessageDelivered(ackId, message, deadline) =>
-        JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "message" -> message.toJson, "deadline" -> deadline.toJson)
+      case SubscriptionEvent.MessageDelivered(ackId, message) =>
+        JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "message" -> message.toJson)
+      case SubscriptionEvent.MessageLeased(ackIds, deadline) =>
+        JsObject("type" -> JsString("MessageLeased"), "ackIds" -> ackIds.toJson, "deadline" -> deadline.toJson)
       case SubscriptionEvent.MessageAcknowledged(ackId) =>
         JsObject("type" -> JsString("MessageAcknowledged"), "ackId" -> ackId.toJson)
       case SubscriptionEvent.AckDeadlineModified(ackId, deadline) =>
         JsObject("type" -> JsString("AckDeadlineModified"), "ackId" -> ackId.toJson, "deadline" -> deadline.toJson)
+      case SubscriptionEvent.AckDeadlineExpired(ackId, attempt) =>
+        JsObject("type" -> JsString("AckDeadlineExpired"), "ackId" -> ackId.toJson, "attempt" -> attempt.toJson)
+      case SubscriptionEvent.MessageDeadLettered(ackId, message, attempt) =>
+        JsObject("type" -> JsString("MessageDeadLettered"), "ackId" -> ackId.toJson, "message" -> message.toJson, "attempt" -> attempt.toJson)
     def read(json: JsValue): SubscriptionEvent =
       val o = json.asJsObject
       o.fields("type").convertTo[String] match
         case "SubscriptionCreated" =>
           SubscriptionEvent.SubscriptionCreated(o.fields("subscriptionId").convertTo[SubscriptionId], o.fields("topicId").convertTo[TopicId])
         case "MessageDelivered" =>
-          SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("message").convertTo[Message], o.fields("deadline").convertTo[AckDeadline])
+          SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("message").convertTo[Message])
+        case "MessageLeased" =>
+          SubscriptionEvent.MessageLeased(o.fields("ackIds").convertTo[List[AckId]], o.fields("deadline").convertTo[Instant])
         case "MessageAcknowledged" =>
           SubscriptionEvent.MessageAcknowledged(o.fields("ackId").convertTo[AckId])
         case "AckDeadlineModified" =>
-          SubscriptionEvent.AckDeadlineModified(o.fields("ackId").convertTo[AckId], o.fields("deadline").convertTo[AckDeadline])
+          SubscriptionEvent.AckDeadlineModified(o.fields("ackId").convertTo[AckId], o.fields("deadline").convertTo[Instant])
+        case "AckDeadlineExpired" =>
+          SubscriptionEvent.AckDeadlineExpired(o.fields("ackId").convertTo[AckId], o.fields("attempt").convertTo[Int])
+        case "MessageDeadLettered" =>
+          SubscriptionEvent.MessageDeadLettered(
+            o.fields("ackId").convertTo[AckId],
+            o.fields("message").convertTo[Message],
+            o.fields("attempt").convertTo[Int]
+          )
         case other => deserializationError(s"unknown SubscriptionEvent type: $other")

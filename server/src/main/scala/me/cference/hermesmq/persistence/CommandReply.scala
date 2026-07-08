@@ -4,6 +4,9 @@ import me.cference.hermesmq.domain.{Message, Rejection}
 import org.apache.pekko.actor.typed.ActorRef
 import me.cference.hermesmq.domain.{AckId, SubscriptionCommand, TopicCommand, TopicId}
 
+import java.time.Instant
+import scala.concurrent.duration.FiniteDuration
+
 /** Reply sent by a persistent entity once a command has been handled.
   * `Accepted` is sent only after the resulting event is durably journaled;
   * `Rejected` carries the domain [[Rejection]] and no event is persisted.
@@ -33,5 +36,8 @@ final case class PulledMessage(ackId: AckId, message: Message)
 sealed trait SubscriptionEntityCommand
 object SubscriptionEntityCommand:
   final case class Submit(command: SubscriptionCommand, replyTo: ActorRef[CommandReply]) extends SubscriptionEntityCommand
-  // Reply is None when the subscription does not exist, Some(list) otherwise.
-  final case class Pull(max: Int, replyTo: ActorRef[Option[List[PulledMessage]]])        extends SubscriptionEntityCommand
+  // Pull is a persisting lease: it returns AVAILABLE messages and leases each
+  // (deadline = now + ackDeadline). Reply is None when the subscription does not
+  // exist, Some(list) of the leased messages otherwise.
+  final case class Pull(max: Int, ackDeadline: FiniteDuration, now: Instant, replyTo: ActorRef[Option[List[PulledMessage]]])
+      extends SubscriptionEntityCommand

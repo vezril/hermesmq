@@ -9,7 +9,6 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.time.Instant
-import scala.concurrent.duration.*
 
 /** Verifies recovery-by-replay: after a restart, state is rebuilt from the
   * journal so accepted state (and outstanding messages) survive a crash.
@@ -27,7 +26,6 @@ final class SubscriptionRecoverySpec
   private val ackId    = AckId.from("ack-1").toOption.get
   private val msgId    = MessageId.from("m-1").toOption.get
   private val message  = Message.from(msgId, "hi".getBytes, Map("k" -> "v"), Instant.parse("2026-07-07T00:00:00Z")).toOption.get
-  private val deadline = AckDeadline.from(30.seconds).toOption.get
 
   private val kit =
     EventSourcedBehaviorTestKit[SubscriptionEntityCommand, SubscriptionEvent, SubscriptionState](
@@ -46,7 +44,7 @@ final class SubscriptionRecoverySpec
   "Subscription recovery" should {
     "rebuild an outstanding message from the journal after restart" in {
       send(CreateSubscription(subId, topicId))
-      send(RecordDelivery(ackId, message, deadline))
+      send(RecordDelivery(ackId, message))
 
       val recovered = kit.restart().state
       recovered.exists shouldBe true
@@ -55,7 +53,7 @@ final class SubscriptionRecoverySpec
 
     "not resurrect an acknowledged message after restart" in {
       send(CreateSubscription(subId, topicId))
-      send(RecordDelivery(ackId, message, deadline))
+      send(RecordDelivery(ackId, message))
       send(Acknowledge(ackId))
 
       val recovered = kit.restart().state

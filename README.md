@@ -34,7 +34,7 @@ clustering and horizontal scaling are non-goals.
 | Native Scala client library (typed REST wrapper) | ✅ Done |
 | Multi-node cluster: sharded entities + single cluster-wide projection | ✅ Done |
 | Cluster-complete delivery (durable, shared subscriptions read model) | ✅ Done |
-| Redelivery timers and ack-deadline expiry | 🚧 Planned |
+| Redelivery timers, ack-deadline expiry, and dead-lettering | ✅ Done |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
 
@@ -105,8 +105,18 @@ can be overridden by environment variables:
 | `HERMESMQ_DB_USER`     | `hermes`    | Database user                |
 | `HERMESMQ_DB_PASSWORD` | `hermes`    | Database password            |
 
-An invalid or out-of-range port fails fast at startup with a clear error and a
-non-zero exit code.
+### Redelivery & ack-deadline
+
+| Variable                        | Default | Description                                                        |
+|---------------------------------|---------|--------------------------------------------------------------------|
+| `HERMESMQ_ACK_DEADLINE`         | `30s`   | How long a pulled message stays leased before it can be redelivered |
+| `HERMESMQ_MAX_DELIVERY_ATTEMPTS`| `5`     | Attempts before a message is dead-lettered (`0` = unlimited)        |
+| `HERMESMQ_SWEEP_INTERVAL`       | `5s`    | How often the sweeper scans for overdue leases                      |
+| `HERMESMQ_DEAD_LETTER_TOPIC`    | *(none)*| Topic exhausted messages are republished to; empty = drop           |
+
+An invalid or out-of-range port — or a non-positive ack-deadline / sweep-interval,
+or a negative max-delivery-attempts — fails fast at startup with a clear error and
+a non-zero exit code.
 
 ## Topic Admin API
 
@@ -149,6 +159,7 @@ and survives restarts.
 | `POST /v1/subscriptions`                | `{"subscriptionId":"s1","topicId":"orders"}` | `201` · `409` |
 | `POST /v1/subscriptions/{id}/pull`      | `{"max":10}`                           | `200` `{messages:[{ackId,payload,attributes,publishTime}]}` · `404` |
 | `POST /v1/subscriptions/{id}/ack`       | `{"ackIds":["…"]}`                     | `200` `{acknowledged,unknown}` |
+| `POST /v1/subscriptions/{id}/modifyAckDeadline` | `{"ackIds":["…"],"ackDeadlineSeconds":60}` | `200` `{modified,unknown}` · `404` |
 
 ```bash
 curl -X POST localhost:8080/v1/subscriptions \
@@ -162,15 +173,31 @@ curl -X POST localhost:8080/v1/subscriptions/s1/pull \
 
 curl -X POST localhost:8080/v1/subscriptions/s1/ack \
   -H 'Content-Type: application/json' -d '{"ackIds":["s1:<messageId>"]}'   # 200
+
+curl -X POST localhost:8080/v1/subscriptions/s1/modifyAckDeadline \
+  -H 'Content-Type: application/json' \
+  -d '{"ackIds":["s1:<messageId>"],"ackDeadlineSeconds":60}'   # 200 extend the lease
 ```
+
+**Leased delivery, redelivery & dead-lettering.** A pull *leases* the messages it
+returns: each becomes invisible to other pulls until its ack deadline
+(`HERMESMQ_ACK_DEADLINE`, default `30s`) passes. Acknowledge before then to remove
+it. If the deadline lapses unacknowledged, a periodic sweeper
+(`HERMESMQ_SWEEP_INTERVAL`) expires the lease and the message becomes available for
+redelivery, counting one delivery attempt. Once attempts reach
+`HERMESMQ_MAX_DELIVERY_ATTEMPTS` (`0` = unlimited) the message is **dead-lettered**:
+republished to `HERMESMQ_DEAD_LETTER_TOPIC` — carrying `x-dead-letter-subscription`,
+`x-delivery-attempts`, and `x-original-message-id` headers — or dropped (with a
+warning) if no topic is configured. Consumers can extend a lease with
+`modifyAckDeadline`, or nack for immediate redelivery by sending
+`ackDeadlineSeconds: 0`.
 
 **Delivery guarantee (and current limits):** at-least-once. The `ackId` is
 deterministic per `(subscription, message)`, so a projection replay re-delivers
 idempotently and does not duplicate an outstanding message. Not yet implemented
-(planned): ack-deadline expiry / redelivery timers, exactly-once, back-delivery
-of messages published before a subscription existed, and rebuilding the in-memory
-topic→subscriptions index from the journal on restart. REST payloads are treated
-as UTF-8 text.
+(planned): exactly-once, back-delivery of messages published before a subscription
+existed, and rebuilding the in-memory topic→subscriptions index from the journal on
+restart. REST payloads are treated as UTF-8 text.
 
 ## Scala client library
 
