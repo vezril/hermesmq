@@ -27,6 +27,21 @@ object SubscriptionEntity:
     */
   val LeaseTag = "subscription-lease"
 
+  /** Tag applied to every subscription event so the stats projection can fold
+    * backlog, oldest-unacked-age, and redelivery/dead-letter counts.
+    */
+  val StatsTag = "subscription-stats"
+
+  /** Tags for an event: the stats projection sees all events; the index/lease
+    * projections additionally see created/lease events. Pure so it is testable.
+    */
+  def tagsFor(event: SubscriptionEvent): Set[String] =
+    val specific = event match
+      case _: SubscriptionEvent.SubscriptionCreated => Set(CreatedTag)
+      case _: SubscriptionEvent.MessageDelivered    => Set.empty[String]
+      case _                                        => Set(LeaseTag)
+    specific + StatsTag
+
   def persistenceId(subscriptionId: SubscriptionId): PersistenceId =
     PersistenceId.ofUniqueId(s"Subscription|${subscriptionId.value}")
 
@@ -44,11 +59,7 @@ object SubscriptionEntity:
           case SubscriptionEntityCommand.Pull(max, ackDeadline, now, replyTo) =>
             lease(state, max, ackDeadline, now, replyTo),
       eventHandler = Subscription.evolve
-    ).withTagger {
-      case _: SubscriptionEvent.SubscriptionCreated => Set(CreatedTag)
-      case _: SubscriptionEvent.MessageDelivered    => Set.empty
-      case _                                        => Set(LeaseTag)
-    }.withRetention(
+    ).withTagger(tagsFor).withRetention(
       RetentionCriteria
         .snapshotEvery(numberOfEvents = retention.snapshotEveryEvents, keepNSnapshots = retention.keepNSnapshots)
         .withDeleteEventsOnSnapshot
