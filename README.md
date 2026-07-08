@@ -37,7 +37,7 @@ clustering and horizontal scaling are non-goals.
 | Redelivery timers, ack-deadline expiry, and dead-lettering | ✅ Done |
 | gRPC service API (topic admin + pub/sub over HTTP/2) | ✅ Done |
 | Snapshots & journal retention (bounded recovery, event purging) | ✅ Done |
-| Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
+| Observability: read models, admin listings & Prometheus metrics | ✅ Done |
 | gRPC service API | 🚧 Planned |
 
 ## Prerequisites
@@ -260,6 +260,39 @@ yield ack.messageId
 ```
 
 Any gRPC client works — generate stubs from `hermes.proto` in your language of choice.
+
+## Observability
+
+Pekko Projections fold the event journal into durable read models — off the hot
+delivery path — that power admin listings and metrics. They are eventually
+consistent by design.
+
+| Method & path             | Result |
+|---------------------------|--------|
+| `GET /v1/subscriptions`   | `200` `[{subscriptionId, topicId, backlog, oldestUnackedAgeSeconds, redeliveredTotal, deadLetteredTotal}]` |
+| `GET /v1/topics`          | `200` `[{topicId, publishedTotal, deleted}]` |
+| `GET /metrics`            | `200` Prometheus text exposition |
+
+Exposed metrics:
+
+| Metric | Type | Labels | Meaning |
+|--------|------|--------|---------|
+| `hermesmq_subscription_backlog` | gauge | `subscription` | Outstanding (unacknowledged) messages |
+| `hermesmq_subscription_oldest_unacked_age_seconds` | gauge | `subscription` | Age of the oldest unacknowledged message |
+| `hermesmq_messages_published_total` | counter | `topic` | Messages published to the topic |
+| `hermesmq_messages_redelivered_total` | counter | `subscription` | Redeliveries (ack-deadline expiries) |
+| `hermesmq_messages_dead_lettered_total` | counter | `subscription` | Dead-lettered messages |
+
+```bash
+curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...}]
+curl localhost:8080/metrics            # hermesmq_subscription_backlog{subscription="s1"} 2 ...
+```
+
+The stats projections use exactly-once processing so counters are never
+double-counted on replay. Counts are maintained **forward**: because journal
+retention purges old events, these read models cannot be rebuilt from a
+from-zero replay once events are deleted — the projections run continuously from
+first start, so live counts stay accurate.
 
 ## Scala client library
 

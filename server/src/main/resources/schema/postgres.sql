@@ -89,3 +89,28 @@ CREATE TABLE IF NOT EXISTS public.outstanding_leases (
     PRIMARY KEY (subscription_id, ack_id)
 );
 CREATE INDEX IF NOT EXISTS outstanding_leases_deadline_idx ON public.outstanding_leases (deadline);
+
+-- Observability read models (maintained forward by the stats projections; serve
+-- the admin listing + Prometheus /metrics endpoints, off the hot delivery path).
+CREATE TABLE IF NOT EXISTS public.subscription_backlog (
+    subscription_id VARCHAR(255) NOT NULL,
+    ack_id          VARCHAR(255) NOT NULL,
+    delivered_at    TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (subscription_id, ack_id)
+);
+CREATE INDEX IF NOT EXISTS subscription_backlog_sub_idx ON public.subscription_backlog (subscription_id);
+
+CREATE TABLE IF NOT EXISTS public.subscription_stats (
+    subscription_id     VARCHAR(255) NOT NULL,
+    topic_id            VARCHAR(255) NOT NULL,
+    redelivered_total   BIGINT       NOT NULL DEFAULT 0,
+    dead_lettered_total BIGINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (subscription_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.topic_stats (
+    topic_id        VARCHAR(255) NOT NULL,
+    published_total BIGINT       NOT NULL DEFAULT 0,
+    deleted         BOOLEAN      NOT NULL DEFAULT false,
+    PRIMARY KEY (topic_id)
+);
