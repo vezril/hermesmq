@@ -3,8 +3,9 @@
 A single-node, event-sourced message broker built in Scala on [Apache Pekko](https://pekko.apache.org/).
 
 > **Status:** early scaffolding. This repository currently contains the build
-> tooling, CI/CD pipeline, and a Pekko runtime smoke test. Broker functionality
-> (topics, subscriptions, persistence, gRPC) lands in later features.
+> tooling, CI/CD pipeline, and a runnable Pekko HTTP service exposing health
+> endpoints (no persistence yet). Broker functionality (topics, subscriptions,
+> persistence, gRPC) lands in later features.
 
 ## Prerequisites
 
@@ -27,20 +28,81 @@ sbt compile
 sbt test
 ```
 
-The suite includes a **Pekko smoke test** (`PingPongSpec`) that starts a typed
-actor and asserts it replies, proving the runtime is wired correctly, plus a
-plain unit test (`AppInfoSpec`). The test kit shuts its actor system down after
-the suite, so no dispatcher threads are left running.
+The suite includes a **Pekko smoke test** (`PingPongSpec`), route tests for the
+health endpoints via `pekko-http-testkit` (`HealthRoutesSpec`), a real-socket
+boot/shutdown test (`HttpServerSpec`), and config parsing tests
+(`ServiceConfigSpec`). Actor systems are shut down after each suite, so no
+dispatcher threads are left running.
+
+## Run the service
+
+```bash
+sbt run
+```
+
+The service starts a Pekko HTTP server (default `0.0.0.0:8080`) and exposes:
+
+| Endpoint            | Purpose    | Response |
+|---------------------|------------|----------|
+| `GET /health`       | Liveness   | `200` with `{"status":"UP","service":"hermesmq","version":"…"}` |
+| `HEAD /health`      | Liveness   | `200`, no body (cheap probe) |
+| `GET /health/ready` | Readiness  | `200` once bound and ready; `503` while starting or draining |
+
+```bash
+curl localhost:8080/health
+curl -i localhost:8080/health/ready
+```
+
+Press `Ctrl-C` (or send `SIGTERM`) to shut down gracefully — readiness flips to
+`503`, the HTTP server unbinds, and the port is released via Pekko
+`CoordinatedShutdown`.
+
+### Configuration
+
+Settings live in [`application.conf`](src/main/resources/application.conf) and
+can be overridden by environment variables:
+
+| Variable             | Default   | Description            |
+|----------------------|-----------|------------------------|
+| `HERMESMQ_HTTP_HOST` | `0.0.0.0` | HTTP bind host         |
+| `HERMESMQ_HTTP_PORT` | `8080`    | HTTP bind port (1–65535) |
+
+An invalid or out-of-range port fails fast at startup with a clear error and a
+non-zero exit code.
+
+## Docker
+
+The service is packaged into a container image with `sbt-native-packager`
+(slim `eclipse-temurin:21-jre` base, non-root user, port `8080` exposed, image
+tag tracking the project version):
+
+```bash
+sbt Docker/publishLocal                      # build image locally
+docker run -p 8080:8080 hermesmq:latest      # run it
+curl localhost:8080/health                   # -> 200
+
+# override the port at run time
+docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 hermesmq:latest
+```
+
+`docker stop` sends `SIGTERM`, so the container shuts down gracefully within the
+stop grace period. (Publishing the image to a registry is a later feature.)
 
 ## Project layout
 
 ```
-build.sbt                    # build definition (deps, versioning, publishing)
+build.sbt                    # build definition (deps, versioning, Docker, publishing)
 project/
   build.properties           # pinned sbt version
-  plugins.sbt                # sbt-dynver (tag-driven versioning)
+  plugins.sbt                # sbt-dynver + sbt-native-packager
 src/
-  main/scala/me/cference/hermesmq/   # application sources
+  main/scala/me/cference/hermesmq/
+    Main.scala               # entry point: config -> actor system -> HTTP bind
+    AppInfo.scala            # service name/version metadata
+    config/ServiceConfig.scala   # typed, validated config parsing
+    http/HealthRoutes.scala      # /health and /health/ready routes
+    http/HttpServer.scala        # bind + readiness + graceful unbind
+  main/resources/            # application.conf, logback.xml
   test/scala/me/cference/hermesmq/   # tests
 .github/workflows/           # CI and release automation
 ```
