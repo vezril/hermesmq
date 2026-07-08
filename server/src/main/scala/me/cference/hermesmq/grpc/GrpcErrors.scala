@@ -30,3 +30,11 @@ object GrpcErrors:
   /** Exception for a backend/service failure → UNAVAILABLE. */
   def unavailable(cause: Throwable): GrpcServiceException =
     new GrpcServiceException(Status.UNAVAILABLE.withDescription("service unavailable").withCause(cause))
+
+  /** Exception for a missing/invalid credential → UNAUTHENTICATED. */
+  def unauthenticated: GrpcServiceException =
+    new GrpcServiceException(Status.UNAUTHENTICATED.withDescription("missing or invalid credentials"))
+
+  /** Exception for a principal lacking a required scope → PERMISSION_DENIED. */
+  def permissionDenied: GrpcServiceException =
+    new GrpcServiceException(Status.PERMISSION_DENIED.withDescription("admin scope required"))

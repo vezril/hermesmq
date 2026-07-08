@@ -1,5 +1,6 @@
 package me.cference.hermesmq.http
 
+import me.cference.hermesmq.auth.{Principal, TenantScope}
 import me.cference.hermesmq.domain.{Rejection, TopicCommand, TopicId}
 import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -23,8 +24,10 @@ object TopicAdminJson extends DefaultJsonProtocol:
 
 /** REST admin endpoints for creating, reading, updating, and deleting topics.
   * Delegates to a [[TopicService]] and maps domain outcomes to HTTP statuses.
+  * Write operations require the `admin` scope on the principal; the default
+  * principal grants it, so single-tenant/unauthenticated use is unchanged.
   */
-final class TopicAdminRoutes(service: TopicService):
+final class TopicAdminRoutes(service: TopicService, principal: Principal = TopicAdminRoutes.AdminPrincipal):
   import TopicAdminJson.given
   import SprayJsonSupport.*
 
@@ -33,12 +36,14 @@ final class TopicAdminRoutes(service: TopicService):
       concat(
         pathEndOrSingleSlash {
           post {
-            entity(as[CreateTopicRequest]) { req =>
-              withTopicId(req.topicId) { id =>
-                completeWrite(
-                  service.submit(id, TopicCommand.CreateTopic(id, req.labels.getOrElse(Map.empty))),
-                  StatusCodes.Created
-                )
+            requireAdmin {
+              entity(as[CreateTopicRequest]) { req =>
+                withTopicId(req.topicId) { id =>
+                  completeWrite(
+                    service.submit(id, TopicCommand.CreateTopic(id, req.labels.getOrElse(Map.empty))),
+                    StatusCodes.Created
+                  )
+                }
               }
             }
           }
@@ -54,12 +59,16 @@ final class TopicAdminRoutes(service: TopicService):
                 }
               },
               patch {
-                entity(as[UpdateTopicRequest]) { req =>
-                  completeWrite(service.submit(id, TopicCommand.UpdateTopic(req.labels)), StatusCodes.OK)
+                requireAdmin {
+                  entity(as[UpdateTopicRequest]) { req =>
+                    completeWrite(service.submit(id, TopicCommand.UpdateTopic(req.labels)), StatusCodes.OK)
+                  }
                 }
               },
               delete {
-                completeWrite(service.submit(id, TopicCommand.DeleteTopic), StatusCodes.NoContent)
+                requireAdmin {
+                  completeWrite(service.submit(id, TopicCommand.DeleteTopic), StatusCodes.NoContent)
+                }
               }
             )
           }
@@ -67,9 +76,13 @@ final class TopicAdminRoutes(service: TopicService):
       )
     }
 
-  /** Validate a raw id into a `TopicId`, or reject with 400. */
+  /** Gate a write behind the `admin` scope; otherwise 403. */
+  private def requireAdmin(inner: => Route): Route =
+    if principal.hasScope("admin") then inner else complete(StatusCodes.Forbidden)
+
+  /** Validate a raw id into a `TopicId`, rejecting the reserved separator (400). */
   private def withTopicId(raw: String)(inner: TopicId => Route): Route =
-    TopicId.from(raw) match
+    TenantScope.validateExternalId(raw).flatMap(TopicId.from) match
       case Right(id) => inner(id)
       case Left(err) => complete(StatusCodes.BadRequest, err.message)
 
@@ -87,4 +100,8 @@ final class TopicAdminRoutes(service: TopicService):
     TopicResponse(snap.topicId.value, snap.labels)
 
 object TopicAdminRoutes:
-  def apply(service: TopicService): TopicAdminRoutes = new TopicAdminRoutes(service)
+  /** Default principal for unauthenticated/single-tenant use: admin on the default tenant. */
+  val AdminPrincipal: Principal = Principal(TenantScope.DefaultTenant, Set("admin"))
+
+  def apply(service: TopicService, principal: Principal = AdminPrincipal): TopicAdminRoutes =
+    new TopicAdminRoutes(service, principal)
