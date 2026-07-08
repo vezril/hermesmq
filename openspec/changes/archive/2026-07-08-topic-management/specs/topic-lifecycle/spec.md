@@ -1,10 +1,4 @@
-# topic-lifecycle Specification
-
-## Purpose
-
-Define the Topic aggregate's pure write-side logic: creating a topic (with labels), publishing messages, deleting a topic, and updating its labels — expressed as total `decide`/`evolve` functions with explicit rejections.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Create a topic
 
@@ -25,11 +19,6 @@ The Topic aggregate SHALL provide a pure `decide(state, command)` that, for a `C
 - **WHEN** `decide` handles `CreateTopic` for the same id
 - **THEN** it returns a `Left(Rejection)` (the id has been used) and no event is produced
 
-#### Scenario: Edge case — decide is a total function (no exceptions)
-- **GIVEN** any command applied to any state
-- **WHEN** `decide` is invoked
-- **THEN** it returns an `Either` (Right events or Left rejection) and never throws
-
 ### Requirement: Publish a message to a topic
 
 For a `Publish` command carrying a fully-formed `Message`, `decide` SHALL return a `MessagePublished` event only when the topic is active (created and not deleted), and SHALL reject publishing to a non-existent or deleted topic.
@@ -48,6 +37,8 @@ For a `Publish` command carrying a fully-formed `Message`, `decide` SHALL return
 - **GIVEN** a topic that has been deleted
 - **WHEN** `decide` handles `Publish(message)`
 - **THEN** it returns a `Left(Rejection)` (not found), and no event is produced
+
+## ADDED Requirements
 
 ### Requirement: Delete a topic
 

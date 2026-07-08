@@ -63,14 +63,14 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
 
       // First incarnation: create the subscription (writes to Postgres).
       val first = testKit.spawn(SubscriptionEntity(subId))
-      first ! SubscriptionEntityCommand(SubscriptionCommand.CreateSubscription(subId, topicId), probe.ref)
+      first ! SubscriptionEntityCommand.Submit(SubscriptionCommand.CreateSubscription(subId, topicId), probe.ref)
       probe.expectMessage(20.seconds,CommandReply.Accepted)
       testKit.stop(first)
 
       // Second incarnation recovers from the journal: creating again is rejected,
       // proving the create event was durably persisted and replayed from Postgres.
       val second = testKit.spawn(SubscriptionEntity(subId))
-      second ! SubscriptionEntityCommand(SubscriptionCommand.CreateSubscription(subId, topicId), probe.ref)
+      second ! SubscriptionEntityCommand.Submit(SubscriptionCommand.CreateSubscription(subId, topicId), probe.ref)
       probe.expectMessage(20.seconds,CommandReply.Rejected(Rejection.SubscriptionAlreadyExists))
     }
   }

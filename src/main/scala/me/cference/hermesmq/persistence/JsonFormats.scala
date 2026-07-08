@@ -49,25 +49,37 @@ object JsonFormats extends DefaultJsonProtocol:
       val publishTime = Instant.parse(o.fields("publishTime").convertTo[String])
       Message.from(id, payload, attributes, publishTime).fold(e => deserializationError(e.message), identity)
 
+  /** Labels default to empty when absent, so events journaled before topics had
+    * labels (v0.2.0) still deserialize.
+    */
+  private def readLabels(o: JsObject): Map[String, String] =
+    o.fields.get("labels").map(_.convertTo[Map[String, String]]).getOrElse(Map.empty)
+
   given RootJsonFormat[TopicEvent] with
     def write(e: TopicEvent): JsValue = e match
-      case TopicEvent.TopicCreated(topicId) =>
-        JsObject("type" -> JsString("TopicCreated"), "topicId" -> topicId.toJson)
+      case TopicEvent.TopicCreated(topicId, labels) =>
+        JsObject("type" -> JsString("TopicCreated"), "topicId" -> topicId.toJson, "labels" -> labels.toJson)
       case TopicEvent.MessagePublished(message) =>
         JsObject("type" -> JsString("MessagePublished"), "message" -> message.toJson)
+      case TopicEvent.TopicDeleted(topicId) =>
+        JsObject("type" -> JsString("TopicDeleted"), "topicId" -> topicId.toJson)
+      case TopicEvent.TopicLabelsUpdated(topicId, labels) =>
+        JsObject("type" -> JsString("TopicLabelsUpdated"), "topicId" -> topicId.toJson, "labels" -> labels.toJson)
     def read(json: JsValue): TopicEvent =
       val o = json.asJsObject
       o.fields("type").convertTo[String] match
-        case "TopicCreated"     => TopicEvent.TopicCreated(o.fields("topicId").convertTo[TopicId])
-        case "MessagePublished" => TopicEvent.MessagePublished(o.fields("message").convertTo[Message])
-        case other              => deserializationError(s"unknown TopicEvent type: $other")
+        case "TopicCreated"       => TopicEvent.TopicCreated(o.fields("topicId").convertTo[TopicId], readLabels(o))
+        case "MessagePublished"   => TopicEvent.MessagePublished(o.fields("message").convertTo[Message])
+        case "TopicDeleted"       => TopicEvent.TopicDeleted(o.fields("topicId").convertTo[TopicId])
+        case "TopicLabelsUpdated" => TopicEvent.TopicLabelsUpdated(o.fields("topicId").convertTo[TopicId], readLabels(o))
+        case other                => deserializationError(s"unknown TopicEvent type: $other")
 
   given RootJsonFormat[SubscriptionEvent] with
     def write(e: SubscriptionEvent): JsValue = e match
       case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId) =>
         JsObject("type" -> JsString("SubscriptionCreated"), "subscriptionId" -> subscriptionId.toJson, "topicId" -> topicId.toJson)
-      case SubscriptionEvent.MessageDelivered(ackId, messageId, deadline) =>
-        JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "messageId" -> messageId.toJson, "deadline" -> deadline.toJson)
+      case SubscriptionEvent.MessageDelivered(ackId, message, deadline) =>
+        JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "message" -> message.toJson, "deadline" -> deadline.toJson)
       case SubscriptionEvent.MessageAcknowledged(ackId) =>
         JsObject("type" -> JsString("MessageAcknowledged"), "ackId" -> ackId.toJson)
       case SubscriptionEvent.AckDeadlineModified(ackId, deadline) =>
@@ -78,7 +90,7 @@ object JsonFormats extends DefaultJsonProtocol:
         case "SubscriptionCreated" =>
           SubscriptionEvent.SubscriptionCreated(o.fields("subscriptionId").convertTo[SubscriptionId], o.fields("topicId").convertTo[TopicId])
         case "MessageDelivered" =>
-          SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("messageId").convertTo[MessageId], o.fields("deadline").convertTo[AckDeadline])
+          SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("message").convertTo[Message], o.fields("deadline").convertTo[AckDeadline])
         case "MessageAcknowledged" =>
           SubscriptionEvent.MessageAcknowledged(o.fields("ackId").convertTo[AckId])
         case "AckDeadlineModified" =>

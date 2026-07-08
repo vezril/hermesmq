@@ -6,6 +6,8 @@ import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.http.scaladsl.Http.ServerBinding
+import org.apache.pekko.http.scaladsl.server.Directives.*
+import org.apache.pekko.http.scaladsl.server.Route
 
 import scala.concurrent.Future
 
@@ -26,12 +28,13 @@ object HttpServer:
       system: ActorSystem[?],
       config: ServiceConfig,
       version: String,
-      readiness: Readiness
+      readiness: Readiness,
+      apiRoutes: Route = reject
   ): Future[ServerBinding] =
     given classicSystem: org.apache.pekko.actor.ActorSystem = system.classicSystem
     import system.executionContext
 
-    val routes = HealthRoutes(version, () => readiness.isReady).routes
+    val routes = HealthRoutes(version, () => readiness.isReady).routes ~ apiRoutes
 
     val bindingF = Http().newServerAt(config.host, config.port).bind(routes)
 
