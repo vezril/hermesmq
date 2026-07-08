@@ -36,9 +36,10 @@ ThisBuild / scalacOptions ++= Seq(
 // back to "vezril" for local `sbt publish`.
 lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "vezril")
 
-lazy val pekkoVersion         = "1.1.3"
-lazy val pekkoHttpVersion     = "1.1.0"
-lazy val pekkoJdbcVersion     = "1.1.0"
+lazy val pekkoVersion           = "1.1.3"
+lazy val pekkoHttpVersion       = "1.1.0"
+lazy val pekkoJdbcVersion       = "1.1.0"
+lazy val pekkoProjectionVersion = "1.1.0"
 lazy val scalaTestVersion     = "3.2.19"
 lazy val logbackVersion       = "1.5.16"
 lazy val sprayJsonVersion     = "1.3.6"
@@ -82,8 +83,11 @@ lazy val root = (project in file("."))
       "org.apache.pekko" %% "pekko-stream"              % pekkoVersion,
       "org.apache.pekko" %% "pekko-http"                % pekkoHttpVersion,
       "org.apache.pekko" %% "pekko-http-spray-json"     % pekkoHttpVersion,
-      "org.apache.pekko" %% "pekko-persistence-typed"   % pekkoVersion,
-      "org.apache.pekko" %% "pekko-persistence-jdbc"    % pekkoJdbcVersion,
+      "org.apache.pekko" %% "pekko-persistence-typed"       % pekkoVersion,
+      "org.apache.pekko" %% "pekko-persistence-jdbc"        % pekkoJdbcVersion,
+      "org.apache.pekko" %% "pekko-persistence-query"       % pekkoVersion,
+      "org.apache.pekko" %% "pekko-projection-eventsourced" % pekkoProjectionVersion,
+      "org.apache.pekko" %% "pekko-projection-jdbc"         % pekkoProjectionVersion,
       "org.apache.pekko" %% "pekko-slf4j"               % pekkoVersion,
       "io.spray"         %% "spray-json"                % sprayJsonVersion,
       "org.postgresql"    % "postgresql"                % postgresVersion,

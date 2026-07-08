@@ -78,8 +78,8 @@ object JsonFormats extends DefaultJsonProtocol:
     def write(e: SubscriptionEvent): JsValue = e match
       case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId) =>
         JsObject("type" -> JsString("SubscriptionCreated"), "subscriptionId" -> subscriptionId.toJson, "topicId" -> topicId.toJson)
-      case SubscriptionEvent.MessageDelivered(ackId, messageId, deadline) =>
-        JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "messageId" -> messageId.toJson, "deadline" -> deadline.toJson)
+      case SubscriptionEvent.MessageDelivered(ackId, message, deadline) =>
+        JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "message" -> message.toJson, "deadline" -> deadline.toJson)
       case SubscriptionEvent.MessageAcknowledged(ackId) =>
         JsObject("type" -> JsString("MessageAcknowledged"), "ackId" -> ackId.toJson)
       case SubscriptionEvent.AckDeadlineModified(ackId, deadline) =>
@@ -90,7 +90,7 @@ object JsonFormats extends DefaultJsonProtocol:
         case "SubscriptionCreated" =>
           SubscriptionEvent.SubscriptionCreated(o.fields("subscriptionId").convertTo[SubscriptionId], o.fields("topicId").convertTo[TopicId])
         case "MessageDelivered" =>
-          SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("messageId").convertTo[MessageId], o.fields("deadline").convertTo[AckDeadline])
+          SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("message").convertTo[Message], o.fields("deadline").convertTo[AckDeadline])
         case "MessageAcknowledged" =>
           SubscriptionEvent.MessageAcknowledged(o.fields("ackId").convertTo[AckId])
         case "AckDeadlineModified" =>

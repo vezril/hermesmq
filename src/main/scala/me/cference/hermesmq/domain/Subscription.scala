@@ -3,19 +3,21 @@ package me.cference.hermesmq.domain
 /** Commands accepted by the Subscription aggregate's write side. */
 enum SubscriptionCommand:
   case CreateSubscription(subscriptionId: SubscriptionId, topicId: TopicId)
-  case RecordDelivery(ackId: AckId, messageId: MessageId, deadline: AckDeadline)
+  case RecordDelivery(ackId: AckId, message: Message, deadline: AckDeadline)
   case Acknowledge(ackId: AckId)
   case ModifyAckDeadline(ackId: AckId, deadline: AckDeadline)
 
 /** Events emitted by the Subscription aggregate. */
 enum SubscriptionEvent:
   case SubscriptionCreated(subscriptionId: SubscriptionId, topicId: TopicId)
-  case MessageDelivered(ackId: AckId, messageId: MessageId, deadline: AckDeadline)
+  case MessageDelivered(ackId: AckId, message: Message, deadline: AckDeadline)
   case MessageAcknowledged(ackId: AckId)
   case AckDeadlineModified(ackId: AckId, deadline: AckDeadline)
 
-/** A delivered-but-unacknowledged message tracked by a subscription. */
-final case class Outstanding(messageId: MessageId, deadline: AckDeadline)
+/** A delivered-but-unacknowledged message tracked by a subscription. The full
+  * message is retained so it can be returned when the subscription is consumed.
+  */
+final case class Outstanding(message: Message, deadline: AckDeadline)
 
 /** In-memory Subscription state: whether it exists, the topic it is bound to,
   * and the set of outstanding (delivered, unacknowledged) messages by ack id.
@@ -41,9 +43,12 @@ object Subscription:
         if state.exists then Left(Rejection.SubscriptionAlreadyExists)
         else Right(List(SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId)))
 
-      case SubscriptionCommand.RecordDelivery(ackId, messageId, deadline) =>
+      case SubscriptionCommand.RecordDelivery(ackId, message, deadline) =>
         if !state.exists then Left(Rejection.SubscriptionNotFound)
-        else Right(List(SubscriptionEvent.MessageDelivered(ackId, messageId, deadline)))
+        // Idempotent: a replayed delivery for an outstanding ackId is a no-op,
+        // so projection replays never duplicate outstanding entries.
+        else if state.outstanding.contains(ackId) then Right(Nil)
+        else Right(List(SubscriptionEvent.MessageDelivered(ackId, message, deadline)))
 
       case SubscriptionCommand.Acknowledge(ackId) =>
         ifOutstanding(state, ackId)(SubscriptionEvent.MessageAcknowledged(ackId))
@@ -56,8 +61,8 @@ object Subscription:
       case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId) =>
         state.copy(subscriptionId = Some(subscriptionId), topicId = Some(topicId))
 
-      case SubscriptionEvent.MessageDelivered(ackId, messageId, deadline) =>
-        state.copy(outstanding = state.outstanding.updated(ackId, Outstanding(messageId, deadline)))
+      case SubscriptionEvent.MessageDelivered(ackId, message, deadline) =>
+        state.copy(outstanding = state.outstanding.updated(ackId, Outstanding(message, deadline)))
 
       case SubscriptionEvent.MessageAcknowledged(ackId) =>
         state.copy(outstanding = state.outstanding.removed(ackId))

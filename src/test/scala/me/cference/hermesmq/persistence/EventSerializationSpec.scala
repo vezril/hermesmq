@@ -66,8 +66,8 @@ final class EventSerializationSpec
         SubscriptionEvent.SubscriptionCreated(subId, topicId)
     }
     "round-trip MessageDelivered" in {
-      roundTrip[SubscriptionEvent](SubscriptionEvent.MessageDelivered(ackId, msgId, deadline)) shouldBe
-        SubscriptionEvent.MessageDelivered(ackId, msgId, deadline)
+      roundTrip[SubscriptionEvent](SubscriptionEvent.MessageDelivered(ackId, message, deadline)) shouldBe
+        SubscriptionEvent.MessageDelivered(ackId, message, deadline)
     }
     "round-trip MessageAcknowledged" in {
       roundTrip[SubscriptionEvent](SubscriptionEvent.MessageAcknowledged(ackId)) shouldBe
