@@ -115,16 +115,45 @@ The service is packaged into a container image with `sbt-native-packager`
 tag tracking the project version):
 
 ```bash
-sbt Docker/publishLocal                      # build image locally
-docker run -p 8080:8080 hermesmq:latest      # run it
-curl localhost:8080/health                   # -> 200
+sbt Docker/publishLocal                             # build image locally
+docker run -p 8080:8080 vezril/hermesmq:latest      # run it
+curl localhost:8080/health                          # -> 200
 
 # override the port at run time
-docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 hermesmq:latest
+docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 vezril/hermesmq:latest
 ```
 
 `docker stop` sends `SIGTERM`, so the container shuts down gracefully within the
-stop grace period. (Publishing the image to a registry is a later feature.)
+stop grace period.
+
+### Published images (Docker Hub)
+
+Released images are published to
+[`docker.io/vezril/hermesmq`](https://hub.docker.com/r/vezril/hermesmq):
+
+```bash
+docker pull vezril/hermesmq:latest       # newest release
+docker pull vezril/hermesmq:1.4.0        # a specific release
+```
+
+Tagging scheme (single-platform `linux/amd64` for now):
+
+| Trigger              | Tags pushed                          | Moves `latest`? |
+|----------------------|--------------------------------------|-----------------|
+| Release (`vX.Y.Z`)   | `X.Y.Z` **and** `latest`             | Yes             |
+| Push to `development` | snapshot tag (dynver, `+`→`-`)       | No              |
+| Pull request         | *(nothing — images never pushed)*    | No              |
+
+**Required secrets** — set these once in the repository settings so the pipeline
+can push:
+
+| Secret            | Purpose                                   |
+|-------------------|-------------------------------------------|
+| `DOCKER_USERNAME` | Docker Hub username (namespace `vezril`)  |
+| `DOCKER_TOKEN`    | Docker Hub access token                   |
+
+A `vezril/hermesmq` Docker Hub repository must exist. If the secrets are missing
+or invalid, the publish step fails loudly (it is never silently skipped).
 
 ## Project layout
 

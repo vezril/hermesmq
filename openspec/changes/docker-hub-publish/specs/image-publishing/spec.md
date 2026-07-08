@@ -37,3 +37,8 @@ On a push to `development`, the pipeline SHALL build and push a snapshot-tagged 
 - **GIVEN** a pull request build (not a push to `development` or a release tag)
 - **WHEN** CI runs
 - **THEN** no image is pushed to Docker Hub (publishing is restricted to `development` pushes and release tags)
+
+#### Scenario: Edge case — development push skips the image when secrets are absent
+- **GIVEN** the Docker Hub secrets are not yet configured
+- **WHEN** a commit is pushed to `development`
+- **THEN** the development image publish is skipped (not failed) so CI stays green, while a release with missing secrets still fails loudly at the publish step
