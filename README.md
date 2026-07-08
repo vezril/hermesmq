@@ -29,6 +29,7 @@ clustering and horizontal scaling are non-goals.
 | Core domain: Topic/Subscription aggregates (commands, events, `decide`/`evolve`) | ✅ Done |
 | Durable persistence on a configurable database (PostgreSQL) | ✅ Done |
 | Docker image published to Docker Hub | ✅ Done |
+| Topic management (create/delete/update) over a REST admin API | ✅ Done |
 | Message delivery, redelivery, and ack-deadline expiry | 🚧 Planned |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
@@ -102,6 +103,34 @@ can be overridden by environment variables:
 
 An invalid or out-of-range port fails fast at startup with a clear error and a
 non-zero exit code.
+
+## Topic Admin API
+
+Manage topics over REST (JSON). Topics carry a labels/metadata map that can be
+updated; delete is a soft delete (a deleted id cannot be re-created).
+
+| Method & path            | Body                                  | Success | Errors |
+|--------------------------|---------------------------------------|---------|--------|
+| `POST /v1/topics`        | `{"topicId":"orders","labels":{…}}`   | `201`   | `409` exists · `400` bad body |
+| `GET /v1/topics/{id}`    | —                                     | `200` `{topicId, labels}` | `404` |
+| `PATCH /v1/topics/{id}`  | `{"labels":{…}}`                      | `200`   | `404` |
+| `DELETE /v1/topics/{id}` | —                                     | `204`   | `404` |
+
+```bash
+curl -X POST localhost:8080/v1/topics \
+  -H 'Content-Type: application/json' \
+  -d '{"topicId":"orders","labels":{"team":"payments"}}'      # 201
+
+curl localhost:8080/v1/topics/orders                          # 200 {"topicId":"orders","labels":{…}}
+
+curl -X PATCH localhost:8080/v1/topics/orders \
+  -H 'Content-Type: application/json' -d '{"labels":{"team":"core"}}'   # 200
+
+curl -X DELETE localhost:8080/v1/topics/orders                # 204
+```
+
+> A gRPC API (per the architecture) and message publish/consume land in later
+> features; this feature covers topic management over REST.
 
 ## Persistence
 

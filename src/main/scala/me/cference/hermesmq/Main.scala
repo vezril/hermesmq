@@ -2,20 +2,21 @@ package me.cference.hermesmq
 
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.config.{DbConfig, ServiceConfig}
-import me.cference.hermesmq.http.{HttpServer, Readiness}
-import me.cference.hermesmq.persistence.PersistenceHealth
+import me.cference.hermesmq.http.{HttpServer, Readiness, TopicAdminRoutes}
+import me.cference.hermesmq.persistence.{PersistenceHealth, RegistryTopicService, TopicRegistry}
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
+import org.apache.pekko.util.Timeout
 
 import scala.concurrent.Await
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration.*
 import scala.util.{Failure, Success}
 
 /** Entry point for the HermesMQ service.
   *
-  * Boots a typed actor system, loads and validates configuration, and binds the
-  * HTTP health server. Fails fast with a non-zero exit on invalid config or a
-  * bind failure; shuts down gracefully on SIGTERM/SIGINT via CoordinatedShutdown.
+  * Loads and validates configuration, then a root behavior spawns the topic
+  * registry and binds the HTTP server (health + topic admin routes). Fails fast
+  * on invalid config; shuts down gracefully on SIGTERM/SIGINT.
   */
 object Main:
 
@@ -34,21 +35,30 @@ object Main:
         sys.exit(1)
 
       case Right((serviceConfig, dbConfig)) =>
-        val system = ActorSystem(Behaviors.empty[Nothing], "hermesmq", rawConfig)
-        // Readiness is gated on both the HTTP bind and persistence reachability.
         val persistenceHealth = PersistenceHealth(dbConfig)
-        val readiness = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
-        import system.executionContext
+        val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
-        HttpServer.start(system, serviceConfig, AppInfo.Version, readiness).onComplete {
-          case Success(binding) =>
-            system.log.info("HermesMQ {} listening on {}", AppInfo.Version, binding.localAddress)
-          case Failure(ex) =>
-            system.log.error("Failed to bind HTTP server; shutting down", ex)
-            system.terminate()
-            sys.exit(1)
+        val root = Behaviors.setup[Nothing] { ctx =>
+          given system: ActorSystem[?] = ctx.system
+          given Timeout                = Timeout(5.seconds)
+          import ctx.executionContext
+
+          val registry = ctx.spawn(TopicRegistry(), "topic-registry")
+          val service  = RegistryTopicService(registry)
+          val apiRoutes = TopicAdminRoutes(service).routes
+
+          HttpServer.start(ctx.system, serviceConfig, AppInfo.Version, readiness, apiRoutes).onComplete {
+            case Success(binding) =>
+              ctx.log.info("HermesMQ {} listening on {}", AppInfo.Version, binding.localAddress)
+            case Failure(ex) =>
+              ctx.log.error("Failed to bind HTTP server; shutting down", ex)
+              ctx.system.terminate()
+          }
+
+          Behaviors.empty
         }
 
-        // Keep the main thread alive until the actor system terminates
-        // (SIGTERM/SIGINT trigger CoordinatedShutdown, which completes this).
+        val system = ActorSystem[Nothing](root, "hermesmq", rawConfig)
+
+        // Keep the main thread alive until the actor system terminates.
         Await.result(system.whenTerminated, Duration.Inf)
