@@ -10,6 +10,18 @@
 ThisBuild / organization := "me.cference.hermesmq"
 ThisBuild / scalaVersion := "3.3.4"
 
+// Project metadata (carried into the published POM).
+ThisBuild / homepage := Some(url("https://github.com/vezril/hermesmq"))
+ThisBuild / licenses := Seq("MIT" -> url("https://github.com/vezril/hermesmq/blob/main/LICENSE"))
+ThisBuild / developers := List(
+  Developer(
+    id = "vezril",
+    name = "Calvin Ference",
+    email = "calvin.ference@proton.me",
+    url = url("https://github.com/vezril")
+  )
+)
+
 // Fail-fast, warnings-as-errors, and modern Scala 3 hygiene.
 ThisBuild / scalacOptions ++= Seq(
   "-deprecation",
@@ -48,10 +60,10 @@ lazy val root = (project in file("."))
     // --- Docker image settings (sbt-native-packager) ---
     dockerBaseImage    := "eclipse-temurin:21-jre",
     dockerExposedPorts := Seq(8080),
-    // Publish to Docker Hub as docker.io/vezril/hermesmq. Username follows the
-    // DOCKER_USERNAME secret in CI, defaulting to "vezril" locally.
+    // Publish to Docker Hub as docker.io/calvinference/hermesmq. Username follows
+    // the DOCKER_USERNAME secret in CI, defaulting to "calvinference" locally.
     dockerRepository := Some("docker.io"),
-    dockerUsername   := Some(sys.env.getOrElse("DOCKER_USERNAME", "vezril")),
+    dockerUsername   := Some(sys.env.getOrElse("DOCKER_USERNAME", "calvinference")),
     Docker / packageName := "hermesmq",
     // Only releases move the `latest` tag; the release workflow sets this env,
     // development snapshot pushes leave `latest` untouched.

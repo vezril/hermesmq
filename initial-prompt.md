@@ -29,6 +29,8 @@ Features (minimal, more features to be added later, this is just to get started)
 4. Basic Persistence with configurable database (use postgresql for now)
 5. Docker Container and publish artifact to docker hub
 6. Basic README.md with description of the project, CICD banners, AI Usage Disclaimer using an SDLC Team, deployment example, and configuration example. Also add MIT license.
+7. A Client Library to be able to consume the service natively in Scala
+8. Multi-Instance Cluster for the service
 
 More features to come.
 

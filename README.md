@@ -1,12 +1,37 @@
 # HermesMQ
 
-A single-node, event-sourced message broker built in Scala on [Apache Pekko](https://pekko.apache.org/).
+[![CI](https://github.com/vezril/hermesmq/actions/workflows/ci.yml/badge.svg)](https://github.com/vezril/hermesmq/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/vezril/hermesmq?sort=semver)](https://github.com/vezril/hermesmq/releases)
+[![Docker Hub](https://img.shields.io/docker/v/calvinference/hermesmq?label=docker&sort=semver)](https://hub.docker.com/r/calvinference/hermesmq)
+[![License: MIT](https://img.shields.io/github/license/vezril/hermesmq)](LICENSE)
 
-> **Status:** early development. This repository contains the build tooling and
-> CI/CD pipeline, a runnable Pekko HTTP service with health endpoints, the core
-> event-sourced domain (Topic/Subscription aggregates), and durable persistence
-> on a configurable database (PostgreSQL). The delivery path, projections/read
-> models, and the gRPC API land in later features.
+A single-node, **event-sourced Pub/Sub message broker** built in Scala on
+[Apache Pekko](https://pekko.apache.org/).
+
+HermesMQ models topics and subscriptions as event-sourced aggregates: every state
+change is a journaled domain event, and that event log is the source of truth. A
+publish is acknowledged to the producer **only once its event is durably
+written**, and a restart replays the journal so accepted messages survive crashes
+and unacknowledged messages resume exactly where they left off. It targets
+single-node operation and is honest about its guarantees within that constraint —
+clustering and horizontal scaling are non-goals.
+
+> **Status:** early development — the pieces below are being built feature by
+> feature via a spec-driven, test-first workflow (see the
+> [AI Usage Disclaimer](#ai-usage-disclaimer)).
+
+## Capabilities
+
+| Capability | Status |
+|------------|--------|
+| Build tooling, CI/CD, semantic-versioned releases | ✅ Done |
+| Runnable Pekko HTTP service with liveness/readiness health endpoints | ✅ Done |
+| Core domain: Topic/Subscription aggregates (commands, events, `decide`/`evolve`) | ✅ Done |
+| Durable persistence on a configurable database (PostgreSQL) | ✅ Done |
+| Docker image published to Docker Hub | ✅ Done |
+| Message delivery, redelivery, and ack-deadline expiry | 🚧 Planned |
+| Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
+| gRPC service API | 🚧 Planned |
 
 ## Prerequisites
 
@@ -115,12 +140,12 @@ The service is packaged into a container image with `sbt-native-packager`
 tag tracking the project version):
 
 ```bash
-sbt Docker/publishLocal                             # build image locally
-docker run -p 8080:8080 vezril/hermesmq:latest      # run it
-curl localhost:8080/health                          # -> 200
+sbt Docker/publishLocal                                    # build image locally
+docker run -p 8080:8080 calvinference/hermesmq:latest      # run it
+curl localhost:8080/health                                 # -> 200
 
 # override the port at run time
-docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 vezril/hermesmq:latest
+docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 calvinference/hermesmq:latest
 ```
 
 `docker stop` sends `SIGTERM`, so the container shuts down gracefully within the
@@ -129,11 +154,11 @@ stop grace period.
 ### Published images (Docker Hub)
 
 Released images are published to
-[`docker.io/vezril/hermesmq`](https://hub.docker.com/r/vezril/hermesmq):
+[`docker.io/calvinference/hermesmq`](https://hub.docker.com/r/calvinference/hermesmq):
 
 ```bash
-docker pull vezril/hermesmq:latest       # newest release
-docker pull vezril/hermesmq:1.4.0        # a specific release
+docker pull calvinference/hermesmq:latest   # newest release
+docker pull calvinference/hermesmq:1.4.0    # a specific release
 ```
 
 Tagging scheme (single-platform `linux/amd64` for now):
@@ -149,11 +174,73 @@ can push:
 
 | Secret            | Purpose                                   |
 |-------------------|-------------------------------------------|
-| `DOCKER_USERNAME` | Docker Hub username (namespace `vezril`)  |
+| `DOCKER_USERNAME` | Docker Hub username (namespace `calvinference`) |
 | `DOCKER_TOKEN`    | Docker Hub access token                   |
 
-A `vezril/hermesmq` Docker Hub repository must exist. If the secrets are missing
-or invalid, the publish step fails loudly (it is never silently skipped).
+A `calvinference/hermesmq` Docker Hub repository must exist. If the secrets are
+missing or invalid, the publish step fails loudly (it is never silently skipped).
+
+## Deployment example
+
+Run the service together with its PostgreSQL database using Docker Compose. Save
+this as `deploy-compose.yml`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hermesmq
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      # applies the journal/snapshot schema on first start
+      - ./src/main/resources/schema/postgres.sql:/docker-entrypoint-initdb.d/10-hermesmq.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermesmq"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  hermesmq:
+    image: calvinference/hermesmq:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HERMESMQ_HTTP_PORT: 8080
+      HERMESMQ_DB_HOST: postgres
+      HERMESMQ_DB_PORT: 5432
+      HERMESMQ_DB_NAME: hermesmq
+      HERMESMQ_DB_USER: hermes
+      HERMESMQ_DB_PASSWORD: change-me
+    ports:
+      - "8080:8080"
+```
+
+```bash
+docker compose -f deploy-compose.yml up -d
+curl localhost:8080/health         # -> 200 {"status":"UP",...}
+curl -i localhost:8080/health/ready # -> 200 once bound and the DB is reachable
+```
+
+### Configuration example
+
+All settings are environment variables (see the tables above). A typical
+deployment configuration:
+
+```bash
+# HTTP
+export HERMESMQ_HTTP_HOST=0.0.0.0
+export HERMESMQ_HTTP_PORT=8080
+
+# PostgreSQL persistence
+export HERMESMQ_DB_HOST=postgres.internal
+export HERMESMQ_DB_PORT=5432
+export HERMESMQ_DB_NAME=hermesmq
+export HERMESMQ_DB_USER=hermes
+export HERMESMQ_DB_PASSWORD=…        # keep out of version control
+```
 
 ## Project layout
 
@@ -252,3 +339,30 @@ These are configured once so the pipeline is reproducible:
   skip it. Fix the coordinate/version and re-run.
 - **Wrong JDK:** building on a JDK older than the pinned minimum fails with a
   clear version error rather than producing bytecode for the wrong target.
+
+## AI Usage Disclaimer
+
+HermesMQ is built with AI assistance. [Claude](https://www.anthropic.com/claude)
+(Anthropic's Claude Code) acts as an **AI-assisted SDLC team**, contributing
+across the software-development lifecycle:
+
+- **Product / specs** — turning feature requests into acceptance criteria and specifications
+- **Architecture / design** — proposing designs, trade-offs, and decision records
+- **Implementation** — writing the Scala/Pekko code
+- **Testing** — test-first (Red → Green → Refactor); every behavior is covered by a failing test before it is implemented
+- **Review** — reviewing diffs and edge cases before changes are merged
+
+The work follows a **spec-driven workflow** ([OpenSpec](https://github.com/Fission-AI/OpenSpec)):
+each feature is proposed, designed, specified, broken into tasks, and implemented
+under test — one reviewed pull request per feature.
+
+**A human directs and is accountable.** All scope, decisions, and merges are made
+under human direction and review; the AI is an assistant, not an autonomous owner.
+Nothing here is presented as unreviewed or fully autonomous output. Use the
+software under the terms of its [license](#license) and review it for your own
+use case as you would any dependency.
+
+## License
+
+Released under the [MIT License](LICENSE) — © 2026 Calvin Ference. Permissive
+reuse with attribution; see [`LICENSE`](LICENSE) for the full text.
