@@ -68,6 +68,7 @@ service PubSubService {
   rpc Publish (PublishRequest) returns (PublishResponse) {}
   rpc CreateSubscription (CreateSubscriptionRequest) returns (CreateSubscriptionResponse) {}
   rpc Pull (PullRequest) returns (PullResponse) {}
+  rpc StreamMessages (StreamRequest) returns (stream PulledMessage) {}
   rpc Ack (AckRequest) returns (AckResponse) {}
   rpc ModifyAckDeadline (ModifyAckDeadlineRequest) returns (ModifyAckDeadlineResponse) {}
 }
@@ -93,6 +94,13 @@ message PullRequest {
 }
 message PullResponse {
   repeated PulledMessage messages = 1;
+}
+
+// Open a server stream of leased messages. `max` is the per-lease batch (0 = the
+// configured default). Acknowledge received messages with the unary Ack RPC.
+message StreamRequest {
+  string subscription_id = 1;
+  int32 max = 2;
 }
 
 message AckRequest {

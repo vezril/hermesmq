@@ -2,9 +2,13 @@ package me.cference.hermesmq.grpc
 
 import com.google.protobuf.ByteString
 import me.cference.hermesmq.auth.TenantScope
+import me.cference.hermesmq.config.StreamConfig
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.grpc.{Message as ProtoMessage, PulledMessage as ProtoPulledMessage}
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage as DomainPulledMessage, SubscriptionService, TopicService}
+import org.apache.pekko.NotUsed
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream.scaladsl.Source
 
 import java.time.Instant
 import java.util.UUID
@@ -16,7 +20,11 @@ import scala.concurrent.{ExecutionContext, Future}
   * the REST API uses — pull leases exactly as REST pull does. Domain rejections
   * become gRPC statuses via [[GrpcErrors]].
   */
-final class PubSubGrpcService(topics: TopicService, subscriptions: SubscriptionService)(using ExecutionContext)
+final class PubSubGrpcService(
+    topics: TopicService,
+    subscriptions: SubscriptionService,
+    streamConfig: StreamConfig = StreamConfig.Default
+)(using ExecutionContext, ActorSystem)
     extends PubSubService:
 
   def publish(in: PublishRequest): Future[PublishResponse] =
@@ -45,6 +53,20 @@ final class PubSubGrpcService(topics: TopicService, subscriptions: SubscriptionS
         case None           => throw GrpcErrors.rejected(Rejection.SubscriptionNotFound)
       }
     }
+
+  def streamMessages(in: StreamRequest): Source[ProtoPulledMessage, NotUsed] =
+    TenantScope.validateExternalId(in.subscriptionId).flatMap(SubscriptionId.from) match
+      case Left(err) => Source.failed(GrpcErrors.invalid(err))
+      case Right(sid) =>
+        val batch = if in.max > 0 then in.max else streamConfig.batchSize
+        // Probe existence first: an unknown subscription fails the stream NOT_FOUND;
+        // otherwise stream leased messages, mapping each to proto.
+        val futureSource = subscriptions.pull(sid, 0).map {
+          case None => Source.failed[ProtoPulledMessage](GrpcErrors.rejected(Rejection.SubscriptionNotFound))
+          case Some(_) =>
+            MessageStream.leased[DomainPulledMessage](_ => subscriptions.pull(sid, batch), batch, streamConfig.pollInterval).map(toProto)
+        }
+        Source.futureSource(futureSource).mapMaterializedValue(_ => NotUsed)
 
   def ack(in: AckRequest): Future[AckResponse] =
     withExistingSub(in.subscriptionId) { sid =>

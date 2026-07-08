@@ -24,6 +24,7 @@ import scala.concurrent.duration.*
 final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matchers:
 
   private given scala.concurrent.ExecutionContext = system.executionContext
+  private given org.apache.pekko.actor.ActorSystem = system.classicSystem
 
   private val ackId = AckId.from("ack-1").toOption.get
   private val message = Message
@@ -102,5 +103,14 @@ final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWor
     "read a topic back over the wire" in {
       val resp = await(topics.getTopic(GetTopicRequest(topicId = "orders")))
       resp.topic.map(_.topicId) shouldBe Some("orders")
+    }
+
+    "stream leased messages to the generated client" in {
+      val got = Await.result(
+        pubsub.streamMessages(StreamRequest(subscriptionId = "s1", max = 1)).take(2).runWith(org.apache.pekko.stream.scaladsl.Sink.seq),
+        10.seconds
+      )
+      got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
+      got.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
     }
   }
