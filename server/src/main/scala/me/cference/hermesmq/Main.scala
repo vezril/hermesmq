@@ -1,13 +1,15 @@
 package me.cference.hermesmq
 
 import com.typesafe.config.ConfigFactory
+import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
 import me.cference.hermesmq.config.{DbConfig, ServiceConfig}
 import me.cference.hermesmq.delivery.{DeliveryHandler, DeliveryProjection, TopicSubscriptionsIndex}
 import me.cference.hermesmq.domain.AckDeadline
 import me.cference.hermesmq.http.{HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
-import me.cference.hermesmq.persistence.*
+import me.cference.hermesmq.persistence.PersistenceHealth
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
+import org.apache.pekko.cluster.sharding.typed.scaladsl.{ClusterSharding, ShardedDaemonProcess}
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.projection.ProjectionBehavior
 import org.apache.pekko.util.Timeout
@@ -18,9 +20,9 @@ import scala.util.{Failure, Success}
 
 /** Entry point for the HermesMQ service.
   *
-  * A root behavior spawns the topic and subscription registries, the delivery
-  * projection (fan-out of published messages to subscriptions), and binds the
-  * HTTP server (health + topic admin + pub/sub routes).
+  * Runs as a Pekko cluster: Topic/Subscription entities are sharded (one writer
+  * per id cluster-wide), and the delivery projection runs as a single
+  * cluster-wide instance. A single node forms a one-node cluster.
   */
 object Main:
 
@@ -45,21 +47,25 @@ object Main:
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
         val root = Behaviors.setup[Nothing] { ctx =>
-          given system: ActorSystem[?] = ctx.system
-          given Timeout                = Timeout(5.seconds)
+          given Timeout = Timeout(5.seconds)
           import ctx.executionContext
 
-          val topicRegistry = ctx.spawn(TopicRegistry(), "topic-registry")
-          val topicService  = RegistryTopicService(topicRegistry)
+          // Cluster Sharding: one writer per id across the cluster.
+          val sharding = ClusterSharding(ctx.system)
+          TopicSharding.init(sharding)
+          SubscriptionSharding.init(sharding)
+          val topicService        = ShardedTopicService(sharding)
+          val subscriptionService = ShardedSubscriptionService(sharding)
 
-          val subscriptionRegistry = ctx.spawn(SubscriptionRegistry(), "subscription-registry")
-          val subscriptionService  = RegistrySubscriptionService(subscriptionRegistry)
-
+          // Delivery fan-out: exactly one projection instance cluster-wide.
           val index           = TopicSubscriptionsIndex()
           val deliveryHandler = DeliveryHandler(index, subscriptionService, DefaultAckDeadline)
-
-          // Fan-out projection: delivers published messages to subscriptions.
-          ctx.spawn(ProjectionBehavior(DeliveryProjection(ctx.system, dbConfig, deliveryHandler)), "delivery-projection")
+          ShardedDaemonProcess(ctx.system).init(
+            name = "delivery-projection",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) => ProjectionBehavior(DeliveryProjection(ctx.system, dbConfig, deliveryHandler)),
+            stopMessage = ProjectionBehavior.Stop
+          )
 
           val apiRoutes =
             TopicAdminRoutes(topicService).routes ~ PubSubRoutes(topicService, subscriptionService, index).routes
@@ -75,5 +81,7 @@ object Main:
           Behaviors.empty
         }
 
-        val system = ActorSystem[Nothing](root, "hermesmq", rawConfig)
+        // Activate the cluster provider (the base config keeps the default so
+        // tests don't cluster); the system name must match the seed addresses.
+        val system = ActorSystem[Nothing](root, "hermesmq", ClusterConfig.activate(rawConfig))
         Await.result(system.whenTerminated, Duration.Inf)

@@ -32,6 +32,8 @@ clustering and horizontal scaling are non-goals.
 | Topic management (create/delete/update) over a REST admin API | ✅ Done |
 | Publish & consume messages (at-least-once, projection-driven delivery, pull-based) | ✅ Done |
 | Native Scala client library (typed REST wrapper) | ✅ Done |
+| Multi-node cluster: sharded entities + single cluster-wide projection (write side) | ✅ Done |
+| Cluster-complete delivery (distributed subscriptions index) | 🚧 Planned (10b) |
 | Redelivery timers and ack-deadline expiry | 🚧 Planned |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
@@ -221,7 +223,7 @@ HERMESMQ_DB_PASSWORD=hermes sbt run   # service connects to it
 ```
 
 The schema DDL lives at
-[`src/main/resources/schema/postgres.sql`](src/main/resources/schema/postgres.sql);
+[`server/src/main/resources/schema/postgres.sql`](server/src/main/resources/schema/postgres.sql);
 apply it to any fresh database before first use. If the database is unreachable
 or the schema is missing, persistence fails loudly (the operation is never
 silently accepted-and-lost) and `GET /health/ready` reports `503`.
@@ -232,6 +234,39 @@ integration test is excluded from the default run; run it (with Docker) via:
 ```bash
 sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec"
 ```
+
+## Clustering
+
+The service runs as a **Pekko cluster**. Topic and subscription entities are
+distributed with **Cluster Sharding** — exactly one writer per id across the
+cluster — over a shared PostgreSQL journal, and the delivery projection runs as a
+single cluster-wide instance (a `ShardedDaemonProcess`). A single node forms a
+one-node cluster and behaves exactly as a standalone service.
+
+| Variable                 | Default                              | Description                       |
+|--------------------------|--------------------------------------|-----------------------------------|
+| `HERMESMQ_CLUSTER_HOST`  | `127.0.0.1`                          | Artery canonical hostname         |
+| `HERMESMQ_CLUSTER_PORT`  | `25520`                              | Artery remoting port              |
+| `HERMESMQ_CLUSTER_SEEDS` | `pekko://hermesmq@127.0.0.1:25520`   | Comma-separated seed-node list    |
+
+Run a two-node cluster with the provided example (both nodes share one Postgres
+and the same seed list):
+
+```bash
+docker compose -f docker-compose.cluster.yml up -d
+curl localhost:8081/health/ready   # node 1
+curl localhost:8082/health/ready   # node 2
+```
+
+A split-brain resolver (downing provider) keeps membership safe under partitions.
+
+> **Scope note (Feature 10a):** clustering covers the **write/command side** —
+> topic/subscription CRUD, publish, and recovery all work cluster-wide with
+> correct single-writer semantics, and the projection runs once cluster-wide.
+> **Multi-node delivery *completeness* is not yet done**: the topic→subscriptions
+> index is still per-node in memory, so with more than one node a message only
+> fans out to subscriptions known to the projection's node. A distributed index
+> (Feature 10b) closes this. Single-node delivery is fully correct.
 
 ## Docker
 
@@ -295,7 +330,7 @@ services:
       POSTGRES_PASSWORD: change-me
     volumes:
       # applies the journal/snapshot schema on first start
-      - ./src/main/resources/schema/postgres.sql:/docker-entrypoint-initdb.d/10-hermesmq.sql:ro
+      - ./server/src/main/resources/schema/postgres.sql:/docker-entrypoint-initdb.d/10-hermesmq.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hermes -d hermesmq"]
       interval: 5s
@@ -349,8 +384,8 @@ build.sbt                    # multi-module build (domain / server / client)
 project/                     # pinned sbt version + plugins (dynver, native-packager)
 domain/                      # pure value types & aggregates (shared, no IO deps)
   src/…/me/cference/hermesmq/domain/
-server/                      # the service (config, http, persistence, delivery, Main) + Docker
-  src/…/me/cference/hermesmq/{config,http,persistence,delivery}
+server/                      # the service (config, http, persistence, delivery, cluster, Main) + Docker
+  src/…/me/cference/hermesmq/{config,http,persistence,delivery,cluster}
   src/main/resources/        # application.conf, logback.xml, schema/postgres.sql
 client/                      # the Scala client library (typed REST wrapper)
   src/…/me/cference/hermesmq/client/HermesClient.scala
