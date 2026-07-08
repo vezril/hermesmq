@@ -49,18 +49,30 @@ object JsonFormats extends DefaultJsonProtocol:
       val publishTime = Instant.parse(o.fields("publishTime").convertTo[String])
       Message.from(id, payload, attributes, publishTime).fold(e => deserializationError(e.message), identity)
 
+  /** Labels default to empty when absent, so events journaled before topics had
+    * labels (v0.2.0) still deserialize.
+    */
+  private def readLabels(o: JsObject): Map[String, String] =
+    o.fields.get("labels").map(_.convertTo[Map[String, String]]).getOrElse(Map.empty)
+
   given RootJsonFormat[TopicEvent] with
     def write(e: TopicEvent): JsValue = e match
-      case TopicEvent.TopicCreated(topicId) =>
-        JsObject("type" -> JsString("TopicCreated"), "topicId" -> topicId.toJson)
+      case TopicEvent.TopicCreated(topicId, labels) =>
+        JsObject("type" -> JsString("TopicCreated"), "topicId" -> topicId.toJson, "labels" -> labels.toJson)
       case TopicEvent.MessagePublished(message) =>
         JsObject("type" -> JsString("MessagePublished"), "message" -> message.toJson)
+      case TopicEvent.TopicDeleted(topicId) =>
+        JsObject("type" -> JsString("TopicDeleted"), "topicId" -> topicId.toJson)
+      case TopicEvent.TopicLabelsUpdated(topicId, labels) =>
+        JsObject("type" -> JsString("TopicLabelsUpdated"), "topicId" -> topicId.toJson, "labels" -> labels.toJson)
     def read(json: JsValue): TopicEvent =
       val o = json.asJsObject
       o.fields("type").convertTo[String] match
-        case "TopicCreated"     => TopicEvent.TopicCreated(o.fields("topicId").convertTo[TopicId])
-        case "MessagePublished" => TopicEvent.MessagePublished(o.fields("message").convertTo[Message])
-        case other              => deserializationError(s"unknown TopicEvent type: $other")
+        case "TopicCreated"       => TopicEvent.TopicCreated(o.fields("topicId").convertTo[TopicId], readLabels(o))
+        case "MessagePublished"   => TopicEvent.MessagePublished(o.fields("message").convertTo[Message])
+        case "TopicDeleted"       => TopicEvent.TopicDeleted(o.fields("topicId").convertTo[TopicId])
+        case "TopicLabelsUpdated" => TopicEvent.TopicLabelsUpdated(o.fields("topicId").convertTo[TopicId], readLabels(o))
+        case other                => deserializationError(s"unknown TopicEvent type: $other")
 
   given RootJsonFormat[SubscriptionEvent] with
     def write(e: SubscriptionEvent): JsValue = e match

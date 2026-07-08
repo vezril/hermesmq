@@ -41,6 +41,23 @@ final class EventSerializationSpec
     "round-trip TopicCreated" in {
       roundTrip[TopicEvent](TopicEvent.TopicCreated(topicId)) shouldBe TopicEvent.TopicCreated(topicId)
     }
+    "round-trip TopicCreated with labels" in {
+      val e = TopicEvent.TopicCreated(topicId, Map("team" -> "payments"))
+      roundTrip[TopicEvent](e) shouldBe e
+    }
+    "round-trip TopicDeleted" in {
+      roundTrip[TopicEvent](TopicEvent.TopicDeleted(topicId)) shouldBe TopicEvent.TopicDeleted(topicId)
+    }
+    "round-trip TopicLabelsUpdated" in {
+      val e = TopicEvent.TopicLabelsUpdated(topicId, Map("team" -> "core"))
+      roundTrip[TopicEvent](e) shouldBe e
+    }
+    "deserialize a legacy TopicCreated (no labels field) with empty labels" in {
+      import JsonFormats.given
+      import spray.json.*
+      """{"type":"TopicCreated","topicId":"orders"}""".parseJson.convertTo[TopicEvent] shouldBe
+        TopicEvent.TopicCreated(topicId, Map.empty)
+    }
     "round-trip MessagePublished" in {
       roundTrip[TopicEvent](TopicEvent.MessagePublished(message)) shouldBe TopicEvent.MessagePublished(message)
     }
