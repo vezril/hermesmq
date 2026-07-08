@@ -35,6 +35,7 @@ clustering and horizontal scaling are non-goals.
 | Multi-node cluster: sharded entities + single cluster-wide projection | ✅ Done |
 | Cluster-complete delivery (durable, shared subscriptions read model) | ✅ Done |
 | Redelivery timers, ack-deadline expiry, and dead-lettering | ✅ Done |
+| gRPC service API (topic admin + pub/sub over HTTP/2) | ✅ Done |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
 
@@ -97,8 +98,10 @@ can be overridden by environment variables:
 
 | Variable               | Default     | Description                  |
 |------------------------|-------------|------------------------------|
-| `HERMESMQ_HTTP_HOST`   | `0.0.0.0`   | HTTP bind host               |
-| `HERMESMQ_HTTP_PORT`   | `8080`      | HTTP bind port (1–65535)     |
+| `HERMESMQ_HTTP_HOST`   | `0.0.0.0`   | HTTP (REST) bind host        |
+| `HERMESMQ_HTTP_PORT`   | `8080`      | HTTP (REST) bind port (1–65535) |
+| `HERMESMQ_GRPC_HOST`   | `0.0.0.0`   | gRPC (HTTP/2) bind host      |
+| `HERMESMQ_GRPC_PORT`   | `8081`      | gRPC bind port (1–65535)     |
 | `HERMESMQ_DB_HOST`     | `localhost` | PostgreSQL host              |
 | `HERMESMQ_DB_PORT`     | `5432`      | PostgreSQL port              |
 | `HERMESMQ_DB_NAME`     | `hermesmq`  | Database name                |
@@ -143,8 +146,8 @@ curl -X PATCH localhost:8080/v1/topics/orders \
 curl -X DELETE localhost:8080/v1/topics/orders                # 204
 ```
 
-> A gRPC API (per the architecture) lands in a later feature; topic management
-> and publish/consume are available over REST today.
+> Topic management and publish/consume are available over **both** REST (below)
+> and gRPC (see [gRPC API](#grpc-api)).
 
 ## Publish & Consume
 
@@ -198,6 +201,41 @@ idempotently and does not duplicate an outstanding message. Not yet implemented
 (planned): exactly-once, back-delivery of messages published before a subscription
 existed, and rebuilding the in-memory topic→subscriptions index from the journal on
 restart. REST payloads are treated as UTF-8 text.
+
+## gRPC API
+
+The same topic-admin and pub/sub operations are exposed over **Pekko gRPC** — the
+architecture's primary API — served over cleartext HTTP/2 (h2c) on its own port
+(`HERMESMQ_GRPC_PORT`, default `8081`), alongside REST. TLS is expected to be
+terminated by a proxy, mirroring the REST surface.
+
+The contract lives in [`server/src/main/protobuf/hermes.proto`](server/src/main/protobuf/hermes.proto):
+
+| Service | RPCs |
+|---------|------|
+| `TopicAdminService` | `CreateTopic`, `GetTopic`, `UpdateTopic`, `DeleteTopic` |
+| `PubSubService`     | `Publish`, `CreateSubscription`, `Pull`, `Ack`, `ModifyAckDeadline` |
+
+`Pull` leases messages exactly as REST pull does; `Ack`/`ModifyAckDeadline` accept a
+batch and report which ids were applied vs unknown. Domain rejections map to gRPC
+statuses: not-found → `NOT_FOUND`, already-exists → `ALREADY_EXISTS`, bad input →
+`INVALID_ARGUMENT`, backend failure → `UNAVAILABLE`.
+
+```scala
+import me.cference.hermesmq.grpc.*
+import org.apache.pekko.grpc.GrpcClientSettings
+
+val settings = GrpcClientSettings.connectToServiceAt("localhost", 8081).withTls(false)
+val topics   = TopicAdminServiceClient(settings)
+val pubsub   = PubSubServiceClient(settings)
+
+for
+  _   <- topics.createTopic(CreateTopicRequest(topicId = "orders"))
+  ack <- pubsub.publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi")))
+yield ack.messageId
+```
+
+Any gRPC client works — generate stubs from `hermes.proto` in your language of choice.
 
 ## Scala client library
 

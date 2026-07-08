@@ -67,11 +67,14 @@ lazy val domain = (project in file("domain"))
 // --- server: the service + Docker image --------------------------------------
 lazy val server = (project in file("server"))
   .dependsOn(domain)
-  .enablePlugins(JavaAppPackaging, DockerPlugin)
+  .enablePlugins(JavaAppPackaging, DockerPlugin, PekkoGrpcPlugin)
   .settings(noPublish *)
   .settings(
     name := "hermesmq-server",
     Compile / mainClass := Some("me.cference.hermesmq.Main"),
+    // Pekko gRPC emits generated Scala under src_managed; it is not ours to lint,
+    // so silence its warnings before -Werror escalates them (our sources stay strict).
+    scalacOptions += "-Wconf:src=.*src_managed.*:silent",
     // Exclude PostgreSQL integration tests from the default run (opt in: -Dit=true).
     Test / testOptions ++= {
       if (sys.props.get("it").contains("true")) Seq.empty
@@ -79,7 +82,7 @@ lazy val server = (project in file("server"))
     },
     // --- Docker image (docker.io/calvinference/hermesmq) ---
     dockerBaseImage    := "eclipse-temurin:21-jre",
-    dockerExposedPorts := Seq(8080),
+    dockerExposedPorts := Seq(8080, 8081),
     dockerRepository   := Some("docker.io"),
     dockerUsername     := Some(sys.env.getOrElse("DOCKER_USERNAME", "calvinference")),
     Docker / packageName := "hermesmq",
@@ -95,6 +98,8 @@ lazy val server = (project in file("server"))
       "org.apache.pekko" %% "pekko-cluster-typed"           % pekkoVersion,
       "org.apache.pekko" %% "pekko-cluster-sharding-typed"  % pekkoVersion,
       "org.apache.pekko" %% "pekko-stream"                  % pekkoVersion,
+      // Pin pekko-discovery to our Pekko version (pekko-grpc-runtime pulls an older one).
+      "org.apache.pekko" %% "pekko-discovery"               % pekkoVersion,
       "org.apache.pekko" %% "pekko-http"                    % pekkoHttpVersion,
       "org.apache.pekko" %% "pekko-http-spray-json"         % pekkoHttpVersion,
       "org.apache.pekko" %% "pekko-persistence-typed"       % pekkoVersion,
