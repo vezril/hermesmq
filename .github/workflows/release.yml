@@ -57,7 +57,7 @@ jobs:
       # Build and push docker.io/calvinference/hermesmq:<version> and :latest.
       # DOCKER_UPDATE_LATEST=true so a release moves the `latest` tag.
       - name: Publish image to Docker Hub
-        run: sbt -v Docker/publish
+        run: sbt -v server/Docker/publish
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           DOCKER_UPDATE_LATEST: "true"

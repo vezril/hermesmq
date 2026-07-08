@@ -31,6 +31,7 @@ clustering and horizontal scaling are non-goals.
 | Docker image published to Docker Hub | ✅ Done |
 | Topic management (create/delete/update) over a REST admin API | ✅ Done |
 | Publish & consume messages (at-least-once, projection-driven delivery, pull-based) | ✅ Done |
+| Native Scala client library (typed REST wrapper) | ✅ Done |
 | Redelivery timers and ack-deadline expiry | 🚧 Planned |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
@@ -168,6 +169,39 @@ idempotently and does not duplicate an outstanding message. Not yet implemented
 of messages published before a subscription existed, and rebuilding the in-memory
 topic→subscriptions index from the journal on restart. REST payloads are treated
 as UTF-8 text.
+
+## Scala client library
+
+A native, typed Scala client wraps the REST API so applications don't hand-roll
+HTTP. It ships as its own lightweight artifact (`hermesmq-client`) that depends
+only on the shared `hermesmq-domain` types and pekko-http — **not** on the
+server's persistence/projection stack.
+
+```scala
+libraryDependencies += "me.cference.hermesmq" %% "hermesmq-client" % "0.3.0"
+```
+
+```scala
+import me.cference.hermesmq.client.HermesClient
+import me.cference.hermesmq.domain.{TopicId, SubscriptionId, AckId}
+import org.apache.pekko.actor.typed.ActorSystem
+import org.apache.pekko.actor.typed.scaladsl.Behaviors
+
+given system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "app")
+val client = HermesClient("http://localhost:8080")
+
+for
+  _   <- client.createTopic(TopicId.from("orders").toOption.get)
+  _   <- client.createSubscription(SubscriptionId.from("s1").toOption.get, TopicId.from("orders").toOption.get)
+  id  <- client.publish(TopicId.from("orders").toOption.get, "hello", Map("k" -> "v"))
+  msgs <- client.pull(SubscriptionId.from("s1").toOption.get, max = 10)   // after delivery
+  _   <- client.ack(SubscriptionId.from("s1").toOption.get, msgs.map(_.ackId))
+yield ()
+```
+
+Methods return `Future`s; error statuses fail the future with a
+`HermesClientException`, while a not-found on a read (`getTopic`) is an empty
+result. The caller owns the `ActorSystem`.
 
 ## Persistence
 
@@ -311,21 +345,21 @@ export HERMESMQ_DB_PASSWORD=…        # keep out of version control
 ## Project layout
 
 ```
-build.sbt                    # build definition (deps, versioning, Docker, publishing)
-project/
-  build.properties           # pinned sbt version
-  plugins.sbt                # sbt-dynver + sbt-native-packager
-src/
-  main/scala/me/cference/hermesmq/
-    Main.scala               # entry point: config -> actor system -> HTTP bind
-    AppInfo.scala            # service name/version metadata
-    config/ServiceConfig.scala   # typed, validated config parsing
-    http/HealthRoutes.scala      # /health and /health/ready routes
-    http/HttpServer.scala        # bind + readiness + graceful unbind
-  main/resources/            # application.conf, logback.xml
-  test/scala/me/cference/hermesmq/   # tests
+build.sbt                    # multi-module build (domain / server / client)
+project/                     # pinned sbt version + plugins (dynver, native-packager)
+domain/                      # pure value types & aggregates (shared, no IO deps)
+  src/…/me/cference/hermesmq/domain/
+server/                      # the service (config, http, persistence, delivery, Main) + Docker
+  src/…/me/cference/hermesmq/{config,http,persistence,delivery}
+  src/main/resources/        # application.conf, logback.xml, schema/postgres.sql
+client/                      # the Scala client library (typed REST wrapper)
+  src/…/me/cference/hermesmq/client/HermesClient.scala
 .github/workflows/           # CI and release automation
 ```
+
+The modules: `server` and `client` both depend on `domain`; `client` does not
+depend on `server`. Release publishes the `domain` and `client` library jars to
+GitHub Packages and the `server` image to Docker Hub.
 
 ## Branching model
 
