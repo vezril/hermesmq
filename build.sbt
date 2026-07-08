@@ -10,6 +10,18 @@
 ThisBuild / organization := "me.cference.hermesmq"
 ThisBuild / scalaVersion := "3.3.4"
 
+// Project metadata (carried into the published POM).
+ThisBuild / homepage := Some(url("https://github.com/vezril/hermesmq"))
+ThisBuild / licenses := Seq("MIT" -> url("https://github.com/vezril/hermesmq/blob/main/LICENSE"))
+ThisBuild / developers := List(
+  Developer(
+    id = "vezril",
+    name = "Calvin Ference",
+    email = "calvin.ference@proton.me",
+    url = url("https://github.com/vezril")
+  )
+)
+
 // Fail-fast, warnings-as-errors, and modern Scala 3 hygiene.
 ThisBuild / scalacOptions ++= Seq(
   "-deprecation",
