@@ -69,3 +69,12 @@ CREATE TABLE IF NOT EXISTS public.pekko_projection_management (
     last_updated    BIGINT       NOT NULL,
     PRIMARY KEY (projection_name, projection_key)
 );
+
+-- Durable, cluster-shared topic->subscriptions read model (Feature 10b),
+-- maintained by a projection over SubscriptionCreated events; queried by the
+-- delivery fan-out so a message reaches subscriptions created on any node.
+CREATE TABLE IF NOT EXISTS public.topic_subscriptions (
+    topic_id        VARCHAR(255) NOT NULL,
+    subscription_id VARCHAR(255) NOT NULL,
+    PRIMARY KEY (topic_id, subscription_id)
+);

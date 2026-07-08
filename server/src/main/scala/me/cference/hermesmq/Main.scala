@@ -3,7 +3,7 @@ package me.cference.hermesmq
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
 import me.cference.hermesmq.config.{DbConfig, ServiceConfig}
-import me.cference.hermesmq.delivery.{DeliveryHandler, DeliveryProjection, TopicSubscriptionsIndex}
+import me.cference.hermesmq.delivery.{DeliveryHandler, DeliveryProjection, JdbcTopicSubscriptionsRepository, SubscriptionIndexProjection}
 import me.cference.hermesmq.domain.AckDeadline
 import me.cference.hermesmq.http.{HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
 import me.cference.hermesmq.persistence.PersistenceHealth
@@ -57,9 +57,17 @@ object Main:
           val topicService        = ShardedTopicService(sharding)
           val subscriptionService = ShardedSubscriptionService(sharding)
 
-          // Delivery fan-out: exactly one projection instance cluster-wide.
-          val index           = TopicSubscriptionsIndex()
-          val deliveryHandler = DeliveryHandler(index, subscriptionService, DefaultAckDeadline)
+          // Durable, cluster-shared topic→subscriptions read model.
+          val subscriptionsRepo = JdbcTopicSubscriptionsRepository(dbConfig)
+
+          // Two single cluster-wide projections: maintain the index, and fan out.
+          ShardedDaemonProcess(ctx.system).init(
+            name = "subscription-index-projection",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) => ProjectionBehavior(SubscriptionIndexProjection(ctx.system, dbConfig, subscriptionsRepo)),
+            stopMessage = ProjectionBehavior.Stop
+          )
+          val deliveryHandler = DeliveryHandler(subscriptionsRepo, subscriptionService, DefaultAckDeadline)
           ShardedDaemonProcess(ctx.system).init(
             name = "delivery-projection",
             numberOfInstances = 1,
@@ -68,7 +76,7 @@ object Main:
           )
 
           val apiRoutes =
-            TopicAdminRoutes(topicService).routes ~ PubSubRoutes(topicService, subscriptionService, index).routes
+            TopicAdminRoutes(topicService).routes ~ PubSubRoutes(topicService, subscriptionService).routes
 
           HttpServer.start(ctx.system, serviceConfig, AppInfo.Version, readiness, apiRoutes).onComplete {
             case Success(binding) =>

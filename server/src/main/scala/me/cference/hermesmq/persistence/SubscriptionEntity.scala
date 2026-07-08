@@ -11,6 +11,11 @@ import org.apache.pekko.persistence.typed.scaladsl.{Effect, EventSourcedBehavior
   */
 object SubscriptionEntity:
 
+  /** Tag applied to `SubscriptionCreated` events so the subscription-index
+    * projection can consume them via `eventsByTag`.
+    */
+  val CreatedTag = "subscription-created"
+
   def persistenceId(subscriptionId: SubscriptionId): PersistenceId =
     PersistenceId.ofUniqueId(s"Subscription|${subscriptionId.value}")
 
@@ -25,7 +30,10 @@ object SubscriptionEntity:
           case SubscriptionEntityCommand.Pull(max, replyTo) =>
             Effect.none.thenReply(replyTo)(_ => pull(state, max)),
       eventHandler = Subscription.evolve
-    )
+    ).withTagger {
+      case _: SubscriptionEvent.SubscriptionCreated => Set(CreatedTag)
+      case _                                        => Set.empty
+    }
 
   /** `None` if the subscription does not exist; otherwise up to `max`
     * outstanding messages, each with its ack id.

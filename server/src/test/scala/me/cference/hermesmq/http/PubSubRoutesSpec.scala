@@ -1,6 +1,5 @@
 package me.cference.hermesmq.http
 
-import me.cference.hermesmq.delivery.TopicSubscriptionsIndex
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.http.scaladsl.model.{ContentTypes, HttpEntity, StatusCodes}
@@ -13,11 +12,9 @@ import spray.json.*
 import java.time.Instant
 import scala.concurrent.Future
 
-/** Route tests for the pub/sub API, backed by stub services + a real index. */
+/** Route tests for the pub/sub API, backed by stub services. */
 final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRouteTest with DefaultJsonProtocol:
 
-  private val topicId = TopicId.from("orders").toOption.get
-  private val subId   = SubscriptionId.from("s1").toOption.get
   private val ackId   = AckId.from("ack-1").toOption.get
   private val message = Message
     .from(MessageId.from("m-1").toOption.get, "hello".getBytes, Map("k" -> "v"), Instant.parse("2026-07-07T00:00:00Z"))
@@ -39,9 +36,8 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
 
   private def routes(
       topics: TopicService = topicStub(),
-      subs: SubscriptionService = subStub(),
-      index: TopicSubscriptionsIndex = TopicSubscriptionsIndex()
-  ) = Route.seal(PubSubRoutes(topics, subs, index).routes)
+      subs: SubscriptionService = subStub()
+  ) = Route.seal(PubSubRoutes(topics, subs).routes)
 
   "POST /v1/topics/{id}/messages" should {
     "accept a publish and return 202 with a messageId" in {
@@ -64,13 +60,11 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
   }
 
   "POST /v1/subscriptions" should {
-    "create a subscription (201) and index it under its topic" in {
-      val index = TopicSubscriptionsIndex()
+    "create a subscription (201)" in {
       Post("/v1/subscriptions", json("""{"subscriptionId":"s1","topicId":"orders"}""")) ~>
-        routes(subs = subStub(), index = index) ~> check {
+        routes(subs = subStub()) ~> check {
           status shouldBe StatusCodes.Created
         }
-      index.subscriptionsFor(topicId) shouldBe Set(subId)
     }
     "return 409 for a duplicate subscription" in {
       Post("/v1/subscriptions", json("""{"subscriptionId":"s1","topicId":"orders"}""")) ~>

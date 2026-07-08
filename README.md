@@ -32,8 +32,8 @@ clustering and horizontal scaling are non-goals.
 | Topic management (create/delete/update) over a REST admin API | ✅ Done |
 | Publish & consume messages (at-least-once, projection-driven delivery, pull-based) | ✅ Done |
 | Native Scala client library (typed REST wrapper) | ✅ Done |
-| Multi-node cluster: sharded entities + single cluster-wide projection (write side) | ✅ Done |
-| Cluster-complete delivery (distributed subscriptions index) | 🚧 Planned (10b) |
+| Multi-node cluster: sharded entities + single cluster-wide projection | ✅ Done |
+| Cluster-complete delivery (durable, shared subscriptions read model) | ✅ Done |
 | Redelivery timers and ack-deadline expiry | 🚧 Planned |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
@@ -260,13 +260,13 @@ curl localhost:8082/health/ready   # node 2
 
 A split-brain resolver (downing provider) keeps membership safe under partitions.
 
-> **Scope note (Feature 10a):** clustering covers the **write/command side** —
-> topic/subscription CRUD, publish, and recovery all work cluster-wide with
-> correct single-writer semantics, and the projection runs once cluster-wide.
-> **Multi-node delivery *completeness* is not yet done**: the topic→subscriptions
-> index is still per-node in memory, so with more than one node a message only
-> fans out to subscriptions known to the projection's node. A distributed index
-> (Feature 10b) closes this. Single-node delivery is fully correct.
+**Delivery is cluster-complete.** The topic→subscriptions mapping is a durable,
+cluster-shared read model (a `topic_subscriptions` table maintained by a
+projection over `SubscriptionCreated`), so a message published on any node is
+fanned out to **every** subscription of its topic regardless of which node
+created it. Both the delivery and subscription-index projections run as single
+cluster-wide instances. (Still at-least-once, and no back-delivery of messages
+published before a subscription existed.)
 
 ## Docker
 
