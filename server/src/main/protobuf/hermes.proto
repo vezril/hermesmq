@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package hermesmq.v1;
+
+option java_package = "me.cference.hermesmq.grpc";
+option java_multiple_files = true;
+
+// ---- Shared messages --------------------------------------------------------
+
+// A topic and its labels/metadata.
+message Topic {
+  string topic_id = 1;
+  map<string, string> labels = 2;
+}
+
+// An immutable message envelope. publish_time is ISO-8601 UTC (mirrors REST).
+message Message {
+  string message_id = 1;
+  bytes payload = 2;
+  map<string, string> attributes = 3;
+  string publish_time = 4;
+}
+
+// One outstanding message returned by a pull.
+message PulledMessage {
+  string ack_id = 1;
+  Message message = 2;
+}
+
+// ---- Topic administration ---------------------------------------------------
+
+service TopicAdminService {
+  rpc CreateTopic (CreateTopicRequest) returns (CreateTopicResponse) {}
+  rpc GetTopic (GetTopicRequest) returns (GetTopicResponse) {}
+  rpc UpdateTopic (UpdateTopicRequest) returns (UpdateTopicResponse) {}
+  rpc DeleteTopic (DeleteTopicRequest) returns (DeleteTopicResponse) {}
+}
+
+message CreateTopicRequest {
+  string topic_id = 1;
+  map<string, string> labels = 2;
+}
+message CreateTopicResponse {}
+
+message GetTopicRequest {
+  string topic_id = 1;
+}
+message GetTopicResponse {
+  Topic topic = 1;
+}
+
+message UpdateTopicRequest {
+  string topic_id = 1;
+  map<string, string> labels = 2;
+}
+message UpdateTopicResponse {
+  Topic topic = 1;
+}
+
+message DeleteTopicRequest {
+  string topic_id = 1;
+}
+message DeleteTopicResponse {}
+
+// ---- Publish & consume ------------------------------------------------------
+
+service PubSubService {
+  rpc Publish (PublishRequest) returns (PublishResponse) {}
+  rpc CreateSubscription (CreateSubscriptionRequest) returns (CreateSubscriptionResponse) {}
+  rpc Pull (PullRequest) returns (PullResponse) {}
+  rpc Ack (AckRequest) returns (AckResponse) {}
+  rpc ModifyAckDeadline (ModifyAckDeadlineRequest) returns (ModifyAckDeadlineResponse) {}
+}
+
+message PublishRequest {
+  string topic_id = 1;
+  bytes payload = 2;
+  map<string, string> attributes = 3;
+}
+message PublishResponse {
+  string message_id = 1;
+}
+
+message CreateSubscriptionRequest {
+  string subscription_id = 1;
+  string topic_id = 2;
+}
+message CreateSubscriptionResponse {}
+
+message PullRequest {
+  string subscription_id = 1;
+  int32 max = 2;
+}
+message PullResponse {
+  repeated PulledMessage messages = 1;
+}
+
+message AckRequest {
+  string subscription_id = 1;
+  repeated string ack_ids = 2;
+}
+message AckResponse {
+  repeated string acknowledged = 1;
+  repeated string unknown = 2;
+}
+
+message ModifyAckDeadlineRequest {
+  string subscription_id = 1;
+  repeated string ack_ids = 2;
+  int32 ack_deadline_seconds = 3;
+}
+message ModifyAckDeadlineResponse {
+  repeated string modified = 1;
+  repeated string unknown = 2;
+}
