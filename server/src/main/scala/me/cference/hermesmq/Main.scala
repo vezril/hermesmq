@@ -2,8 +2,9 @@ package me.cference.hermesmq
 
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
-import me.cference.hermesmq.config.{DbConfig, RedeliveryConfig, ServiceConfig}
+import me.cference.hermesmq.config.{DbConfig, GrpcConfig, RedeliveryConfig, ServiceConfig}
 import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection}
+import me.cference.hermesmq.grpc.{GrpcServer, PubSubGrpcService, TopicAdminGrpcService}
 import me.cference.hermesmq.http.{HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
 import me.cference.hermesmq.persistence.PersistenceHealth
 import org.apache.pekko.actor.typed.ActorSystem
@@ -31,16 +32,17 @@ object Main:
     val loaded =
       for
         serviceConfig    <- ServiceConfig.from(rawConfig)
+        grpcConfig       <- GrpcConfig.from(rawConfig)
         dbConfig         <- DbConfig.from(rawConfig)
         redeliveryConfig <- RedeliveryConfig.from(rawConfig)
-      yield (serviceConfig, dbConfig, redeliveryConfig)
+      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, dbConfig, redeliveryConfig)) =>
+      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig)) =>
         val persistenceHealth = PersistenceHealth(dbConfig)
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
@@ -106,6 +108,17 @@ object Main:
               ctx.log.info("HermesMQ {} listening on {}", AppInfo.Version, binding.localAddress)
             case Failure(ex) =>
               ctx.log.error("Failed to bind HTTP server; shutting down", ex)
+              ctx.system.terminate()
+          }
+
+          // gRPC endpoint (HTTP/2), served alongside REST over the same services.
+          val topicAdminGrpc = TopicAdminGrpcService(topicService)
+          val pubSubGrpc     = PubSubGrpcService(topicService, subscriptionService)
+          GrpcServer.start(ctx.system, grpcConfig, topicAdminGrpc, pubSubGrpc).onComplete {
+            case Success(binding) =>
+              ctx.log.info("HermesMQ gRPC listening on {}", binding.localAddress)
+            case Failure(ex) =>
+              ctx.log.error("Failed to bind gRPC server; shutting down", ex)
               ctx.system.terminate()
           }
 
