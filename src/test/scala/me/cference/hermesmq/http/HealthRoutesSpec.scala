@@ -71,4 +71,16 @@ final class HealthRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         status shouldBe StatusCodes.OK
       }
     }
+
+    "report 503 when persistence is unreachable while liveness stays 200" in {
+      val readiness = Readiness(persistenceHealthy = () => false)
+      readiness.markBound() // bound, but persistence is down
+      val routes = HealthRoutes(version = "1.2.3-test", readiness = () => readiness.isReady).routes
+      Get("/health/ready") ~> routes ~> check {
+        status shouldBe StatusCodes.ServiceUnavailable
+      }
+      Get("/health") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+      }
+    }
   }

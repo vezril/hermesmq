@@ -24,16 +24,27 @@ ThisBuild / scalacOptions ++= Seq(
 // back to "vezril" for local `sbt publish`.
 lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "vezril")
 
-lazy val pekkoVersion     = "1.1.3"
-lazy val pekkoHttpVersion = "1.1.0"
-lazy val scalaTestVersion = "3.2.19"
-lazy val logbackVersion   = "1.5.16"
+lazy val pekkoVersion         = "1.1.3"
+lazy val pekkoHttpVersion     = "1.1.0"
+lazy val pekkoJdbcVersion     = "1.1.0"
+lazy val scalaTestVersion     = "3.2.19"
+lazy val logbackVersion       = "1.5.16"
+lazy val sprayJsonVersion     = "1.3.6"
+lazy val postgresVersion      = "42.7.4"
+lazy val testcontainersVersion = "1.20.4"
 
 lazy val root = (project in file("."))
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(
     name := "hermesmq",
     Compile / mainClass := Some("me.cference.hermesmq.Main"),
+    // Exclude PostgreSQL integration tests from the default `sbt test` run, so
+    // CI needs no database. Opt in by setting -Dit=true:
+    //   sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec"
+    Test / testOptions ++= {
+      if (sys.props.get("it").contains("true")) Seq.empty
+      else Seq(Tests.Argument(TestFrameworks.ScalaTest, "-l", "me.cference.hermesmq.persistence.PostgresIT"))
+    },
     // --- Docker image settings (sbt-native-packager) ---
     dockerBaseImage    := "eclipse-temurin:21-jre",
     dockerExposedPorts := Seq(8080),
@@ -54,11 +65,17 @@ lazy val root = (project in file("."))
       "org.apache.pekko" %% "pekko-stream"              % pekkoVersion,
       "org.apache.pekko" %% "pekko-http"                % pekkoHttpVersion,
       "org.apache.pekko" %% "pekko-http-spray-json"     % pekkoHttpVersion,
+      "org.apache.pekko" %% "pekko-persistence-typed"   % pekkoVersion,
+      "org.apache.pekko" %% "pekko-persistence-jdbc"    % pekkoJdbcVersion,
       "org.apache.pekko" %% "pekko-slf4j"               % pekkoVersion,
+      "io.spray"         %% "spray-json"                % sprayJsonVersion,
+      "org.postgresql"    % "postgresql"                % postgresVersion,
       "ch.qos.logback"    % "logback-classic"           % logbackVersion,
-      "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion     % Test,
-      "org.apache.pekko" %% "pekko-http-testkit"        % pekkoHttpVersion % Test,
-      "org.scalatest"    %% "scalatest"                 % scalaTestVersion % Test
+      "org.apache.pekko" %% "pekko-actor-testkit-typed"    % pekkoVersion         % Test,
+      "org.apache.pekko" %% "pekko-http-testkit"           % pekkoHttpVersion     % Test,
+      "org.apache.pekko" %% "pekko-persistence-testkit"    % pekkoVersion         % Test,
+      "org.testcontainers" % "postgresql"                  % testcontainersVersion % Test,
+      "org.scalatest"    %% "scalatest"                    % scalaTestVersion     % Test
     ),
     publishTo := Some(
       "GitHub Packages" at s"https://maven.pkg.github.com/$githubOwner/hermesmq"

@@ -12,7 +12,6 @@ import org.scalatest.wordspec.AnyWordSpec
 import org.scalatest.BeforeAndAfterAll
 
 import java.net.ServerSocket
-import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.Await
 import scala.concurrent.duration.*
 
@@ -33,13 +32,13 @@ final class HttpServerSpec extends AnyWordSpec with Matchers with ScalaFutures w
 
   "HttpServer.start" should {
     "bind on an ephemeral port, mark ready, serve /health, then release the port on unbind" in {
-      val readiness = new AtomicBoolean(false)
+      val readiness = Readiness(persistenceHealthy = () => true)
       val binding = HttpServer
         .start(system, ServiceConfig("127.0.0.1", 0), version = "boot-test", readiness = readiness)
         .futureValue
 
       val port = binding.localAddress.getPort
-      readiness.get() shouldBe true
+      readiness.isReady shouldBe true
 
       val response = Http()(system)
         .singleRequest(HttpRequest(uri = s"http://127.0.0.1:$port/health"))
@@ -56,19 +55,19 @@ final class HttpServerSpec extends AnyWordSpec with Matchers with ScalaFutures w
     }
 
     "fail fast (not hang) when the port is already in use, leaving readiness false" in {
-      val firstReady = new AtomicBoolean(false)
+      val firstReady = Readiness(persistenceHealthy = () => true)
       val first = HttpServer
         .start(system, ServiceConfig("127.0.0.1", 0), version = "boot-test", readiness = firstReady)
         .futureValue
       val busyPort = first.localAddress.getPort
       try
-        val secondReady = new AtomicBoolean(false)
+        val secondReady = Readiness(persistenceHealthy = () => true)
         val result =
           HttpServer.start(system, ServiceConfig("127.0.0.1", busyPort), version = "boot-test", readiness = secondReady)
         whenReady(result.failed) { ex =>
           ex shouldBe a[Throwable]
         }
-        secondReady.get() shouldBe false
+        secondReady.isReady shouldBe false
       finally first.unbind().futureValue
     }
   }
