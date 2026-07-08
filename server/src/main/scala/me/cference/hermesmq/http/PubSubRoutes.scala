@@ -1,6 +1,5 @@
 package me.cference.hermesmq.http
 
-import me.cference.hermesmq.delivery.TopicSubscriptionsIndex
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService, TopicService}
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -37,13 +36,12 @@ object PubSubJson extends DefaultJsonProtocol:
 
 /** REST endpoints for publishing to topics and consuming from subscriptions.
   * Payloads are treated as UTF-8 text on the REST surface. Delegates to the
-  * topic/subscription services; creating a subscription also updates the
-  * topic→subscriptions index used by delivery fan-out.
+  * topic/subscription services. Subscriptions are indexed for delivery fan-out
+  * by the subscription-index projection (over `SubscriptionCreated`), not here.
   */
 final class PubSubRoutes(
     topics: TopicService,
-    subscriptions: SubscriptionService,
-    index: TopicSubscriptionsIndex
+    subscriptions: SubscriptionService
 )(using ExecutionContext):
   import PubSubJson.given
   import SprayJsonSupport.*
@@ -81,9 +79,7 @@ final class PubSubRoutes(
                 (SubscriptionId.from(req.subscriptionId), TopicId.from(req.topicId)) match
                   case (Right(sid), Right(tid)) =>
                     onComplete(subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid))) {
-                      case Success(CommandReply.Accepted) =>
-                        index.add(tid, sid)
-                        complete(StatusCodes.Created)
+                      case Success(CommandReply.Accepted)    => complete(StatusCodes.Created)
                       case Success(CommandReply.Rejected(_)) => complete(StatusCodes.Conflict)
                       case Failure(_)                        => complete(StatusCodes.ServiceUnavailable)
                     }
@@ -159,6 +155,6 @@ final class PubSubRoutes(
       }
 
 object PubSubRoutes:
-  def apply(topics: TopicService, subscriptions: SubscriptionService, index: TopicSubscriptionsIndex)(using
+  def apply(topics: TopicService, subscriptions: SubscriptionService)(using
       ExecutionContext
-  ): PubSubRoutes = new PubSubRoutes(topics, subscriptions, index)
+  ): PubSubRoutes = new PubSubRoutes(topics, subscriptions)
