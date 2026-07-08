@@ -17,24 +17,27 @@
 
 ## 3. Edge-case coverage for the build
 
-- [ ] 3.1 Add/verify a check for the unresolvable-dependency edge case (documented reproduction: a bad coordinate yields a non-zero `sbt compile` with a resolution error) — record expected behavior in README or a build note
+- [x] 3.1 Add/verify a check for the unresolvable-dependency edge case (documented reproduction: a bad coordinate yields a non-zero `sbt compile` with a resolution error) — record expected behavior in README or a build note
 - [x] 3.2 Confirm sources are discovered by convention (a source in `src/main/scala` and test in `src/test/scala` are compiled without extra config) — assert via a second trivial passing test
 - [x] 3.3 Verify `.gitignore` prevents staging of `target/` and a sample `.env` (git status shows them ignored)
 
-> **Note:** Tasks left unchecked below require a live GitHub remote (Actions
-> runs, package publishing) or repo-admin access (branch protection) and cannot
-> be executed from the local environment. The underlying behavior each one
-> verifies has been confirmed locally where possible (exit-code gates, dynver
-> versions, the release-tag glob). They are ready to confirm once the repo is
-> pushed to GitHub.
+> **Note:** The repo is live at github.com/vezril/hermesmq. All CI, publishing,
+> branch-protection, and release tasks were verified against real GitHub Actions
+> runs. The two exceptions are 5.5 and 5.7 (release-abort-on-red, missing-creds /
+> re-tag): these are left unchecked because triggering them live would push
+> deliberately-broken releases / duplicate publishes onto the public repo. They
+> are verified by construction — the release workflow runs Test *before* Publish
+> (proven in the successful v0.1.0 run), `sbt test` returns non-zero on a red
+> commit (proven locally), and GitHub Packages versions are immutable so a
+> re-published version is rejected by the platform.
 
 ## 4. Continuous integration workflow
 
 - [x] 4.1 Add `.github/workflows/ci.yml` triggering on `pull_request` and `push` to `development` and `main`
 - [x] 4.2 Configure steps: checkout, `actions/setup-java` (Temurin 21) with sbt dependency caching, `sbt compile`, `sbt test`
-- [ ] 4.3 Verify a green branch produces a passing CI check (push branch / open PR)
-- [ ] 4.4 Verify the red-PR edge case: a branch with a failing test produces a failing, merge-blocking check
-- [ ] 4.5 Verify the compile-failure edge case: a non-compiling branch fails at compile, skips tests, and reports failure
+- [x] 4.3 Verify a green branch produces a passing CI check (push branch / open PR)
+- [x] 4.4 Verify the red-PR edge case: a branch with a failing test produces a failing, merge-blocking check
+- [x] 4.5 Verify the compile-failure edge case: a non-compiling branch fails at compile, skips tests, and reports failure
 - [x] 4.6 On `push` to `development`, add a publish step that publishes the dynver-derived snapshot package to GitHub Packages (owner from `github.repository_owner`, auth via `GITHUB_TOKEN`) after tests pass
 
 ## 5. Versioning & release workflow
@@ -42,16 +45,16 @@
 - [x] 5.1 Confirm `sbt-dynver` derives `X.Y.Z` on a `vX.Y.Z` tag and a pre-release/snapshot version off-tag (`sbt version` on a tagged vs untagged commit)
 - [x] 5.2 Add `.github/workflows/release.yml` triggering on tags matching `v*.*.*`
 - [x] 5.3 Configure release steps: checkout (full history for dynver), setup-java, run tests as a gate, `sbt publish` to GitHub Packages using `GITHUB_TOKEN`, then create a GitHub Release
-- [ ] 5.4 Validate the happy path: push `v0.1.0` on `main` → tests pass → `0.1.0` package published → GitHub Release created
+- [x] 5.4 Validate the happy path: push `v0.1.0` on `main` → tests pass → `0.1.0` package published → GitHub Release created
 - [ ] 5.5 Verify the failing-tests edge case: a release tag on a red commit aborts before publish (no artifact pushed)
 - [x] 5.6 Verify the malformed-tag edge case: a tag like `v1.2` / `release-1` does not trigger a release
 - [ ] 5.7 Verify the missing-credentials and re-tag edge cases: absent token fails at publish with an auth error; re-pushing `v0.1.0` does not overwrite the published package
 
 ## 6. Branch strategy, protection & documentation
 
-- [ ] 6.1 Create the `development` branch from `main` and push both to GitHub
-- [ ] 6.2 Configure branch protection on `main` and `development`: require the CI status check, require PRs, disallow direct pushes
-- [ ] 6.3 Verify the direct-push edge case: a direct push to a protected branch is rejected
+- [x] 6.1 Create the `development` branch from `main` and push both to GitHub
+- [x] 6.2 Configure branch protection on `main` and `development`: require the CI status check, require PRs, disallow direct pushes
+- [x] 6.3 Verify the direct-push edge case: a direct push to a protected branch is rejected
 - [x] 6.4 Write root `README.md`: prerequisites (JDK 21, sbt), how to build (`sbt compile`), how to run tests (`sbt test`), the `main`/`development`/`feature/*` branch model, and the tag-driven SemVer release process
 - [x] 6.5 Document the required GitHub repository settings (branch protection, package registry) in the README so the setup is reproducible
 

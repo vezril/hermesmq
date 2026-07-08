@@ -1,10 +1,37 @@
 # HermesMQ
 
-A single-node, event-sourced message broker built in Scala on [Apache Pekko](https://pekko.apache.org/).
+[![CI](https://github.com/vezril/hermesmq/actions/workflows/ci.yml/badge.svg)](https://github.com/vezril/hermesmq/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/vezril/hermesmq?sort=semver)](https://github.com/vezril/hermesmq/releases)
+[![Docker Hub](https://img.shields.io/docker/v/calvinference/hermesmq?label=docker&sort=semver)](https://hub.docker.com/r/calvinference/hermesmq)
+[![License: MIT](https://img.shields.io/github/license/vezril/hermesmq)](LICENSE)
 
-> **Status:** early scaffolding. This repository currently contains the build
-> tooling, CI/CD pipeline, and a Pekko runtime smoke test. Broker functionality
-> (topics, subscriptions, persistence, gRPC) lands in later features.
+A single-node, **event-sourced Pub/Sub message broker** built in Scala on
+[Apache Pekko](https://pekko.apache.org/).
+
+HermesMQ models topics and subscriptions as event-sourced aggregates: every state
+change is a journaled domain event, and that event log is the source of truth. A
+publish is acknowledged to the producer **only once its event is durably
+written**, and a restart replays the journal so accepted messages survive crashes
+and unacknowledged messages resume exactly where they left off. It targets
+single-node operation and is honest about its guarantees within that constraint —
+clustering and horizontal scaling are non-goals.
+
+> **Status:** early development — the pieces below are being built feature by
+> feature via a spec-driven, test-first workflow (see the
+> [AI Usage Disclaimer](#ai-usage-disclaimer)).
+
+## Capabilities
+
+| Capability | Status |
+|------------|--------|
+| Build tooling, CI/CD, semantic-versioned releases | ✅ Done |
+| Runnable Pekko HTTP service with liveness/readiness health endpoints | ✅ Done |
+| Core domain: Topic/Subscription aggregates (commands, events, `decide`/`evolve`) | ✅ Done |
+| Durable persistence on a configurable database (PostgreSQL) | ✅ Done |
+| Docker image published to Docker Hub | ✅ Done |
+| Message delivery, redelivery, and ack-deadline expiry | 🚧 Planned |
+| Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
+| gRPC service API | 🚧 Planned |
 
 ## Prerequisites
 
@@ -12,6 +39,8 @@ A single-node, event-sourced message broker built in Scala on [Apache Pekko](htt
 |------|---------|-------|
 | JDK  | Temurin 21 | The CI/release pipeline pins Temurin 21. Newer JDKs work locally. |
 | sbt  | 1.10.7 | Pinned in [`project/build.properties`](project/build.properties); the launcher fetches it automatically. |
+| PostgreSQL | 16 | Required to **run** the service (see [Persistence](#persistence)); not needed to build or run the tests. |
+| Docker | any | Only for building the container image and the PostgreSQL integration test. |
 
 Scala itself (3.3 LTS) is resolved by sbt — no separate install needed.
 
@@ -27,20 +56,207 @@ sbt compile
 sbt test
 ```
 
-The suite includes a **Pekko smoke test** (`PingPongSpec`) that starts a typed
-actor and asserts it replies, proving the runtime is wired correctly, plus a
-plain unit test (`AppInfoSpec`). The test kit shuts its actor system down after
-the suite, so no dispatcher threads are left running.
+The suite includes a **Pekko smoke test** (`PingPongSpec`), route tests for the
+health endpoints via `pekko-http-testkit` (`HealthRoutesSpec`), a real-socket
+boot/shutdown test (`HttpServerSpec`), and config parsing tests
+(`ServiceConfigSpec`). Actor systems are shut down after each suite, so no
+dispatcher threads are left running.
+
+## Run the service
+
+```bash
+sbt run
+```
+
+The service starts a Pekko HTTP server (default `0.0.0.0:8080`) and exposes:
+
+| Endpoint            | Purpose    | Response |
+|---------------------|------------|----------|
+| `GET /health`       | Liveness   | `200` with `{"status":"UP","service":"hermesmq","version":"…"}` |
+| `HEAD /health`      | Liveness   | `200`, no body (cheap probe) |
+| `GET /health/ready` | Readiness  | `200` once bound **and** persistence is reachable; `503` otherwise |
+
+```bash
+curl localhost:8080/health
+curl -i localhost:8080/health/ready
+```
+
+Press `Ctrl-C` (or send `SIGTERM`) to shut down gracefully — readiness flips to
+`503`, the HTTP server unbinds, and the port is released via Pekko
+`CoordinatedShutdown`.
+
+### Configuration
+
+Settings live in [`application.conf`](src/main/resources/application.conf) and
+can be overridden by environment variables:
+
+| Variable               | Default     | Description                  |
+|------------------------|-------------|------------------------------|
+| `HERMESMQ_HTTP_HOST`   | `0.0.0.0`   | HTTP bind host               |
+| `HERMESMQ_HTTP_PORT`   | `8080`      | HTTP bind port (1–65535)     |
+| `HERMESMQ_DB_HOST`     | `localhost` | PostgreSQL host              |
+| `HERMESMQ_DB_PORT`     | `5432`      | PostgreSQL port              |
+| `HERMESMQ_DB_NAME`     | `hermesmq`  | Database name                |
+| `HERMESMQ_DB_USER`     | `hermes`    | Database user                |
+| `HERMESMQ_DB_PASSWORD` | `hermes`    | Database password            |
+
+An invalid or out-of-range port fails fast at startup with a clear error and a
+non-zero exit code.
+
+## Persistence
+
+HermesMQ is event-sourced: Topic and Subscription aggregates are
+`EventSourcedBehavior` actors whose events are journaled via
+[pekko-persistence-jdbc](https://pekko.apache.org/docs/pekko-persistence-jdbc/current/).
+An accepted command is acknowledged **only after** its event is durably written,
+and a restart replays the journal to resume exactly where it left off. Events are
+journaled as explicit JSON (Java serialization is disabled).
+
+**PostgreSQL is the default backend.** Start one locally with the provided
+compose file (it applies the schema automatically):
+
+```bash
+docker compose up -d                 # Postgres on :5432 with the schema applied
+HERMESMQ_DB_PASSWORD=hermes sbt run   # service connects to it
+```
+
+The schema DDL lives at
+[`src/main/resources/schema/postgres.sql`](src/main/resources/schema/postgres.sql);
+apply it to any fresh database before first use. If the database is unreachable
+or the schema is missing, persistence fails loudly (the operation is never
+silently accepted-and-lost) and `GET /health/ready` reports `503`.
+
+Unit tests use an in-memory journal and need **no database**. The one PostgreSQL
+integration test is excluded from the default run; run it (with Docker) via:
+
+```bash
+sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec"
+```
+
+## Docker
+
+The service is packaged into a container image with `sbt-native-packager`
+(slim `eclipse-temurin:21-jre` base, non-root user, port `8080` exposed, image
+tag tracking the project version):
+
+```bash
+sbt Docker/publishLocal                                    # build image locally
+docker run -p 8080:8080 calvinference/hermesmq:latest      # run it
+curl localhost:8080/health                                 # -> 200
+
+# override the port at run time
+docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 calvinference/hermesmq:latest
+```
+
+`docker stop` sends `SIGTERM`, so the container shuts down gracefully within the
+stop grace period.
+
+### Published images (Docker Hub)
+
+Released images are published to
+[`docker.io/calvinference/hermesmq`](https://hub.docker.com/r/calvinference/hermesmq):
+
+```bash
+docker pull calvinference/hermesmq:latest   # newest release
+docker pull calvinference/hermesmq:1.4.0    # a specific release
+```
+
+Tagging scheme (single-platform `linux/amd64` for now):
+
+| Trigger              | Tags pushed                          | Moves `latest`? |
+|----------------------|--------------------------------------|-----------------|
+| Release (`vX.Y.Z`)   | `X.Y.Z` **and** `latest`             | Yes             |
+| Push to `development` | snapshot tag (dynver, `+`→`-`)       | No              |
+| Pull request         | *(nothing — images never pushed)*    | No              |
+
+**Required secrets** — set these once in the repository settings so the pipeline
+can push:
+
+| Secret            | Purpose                                   |
+|-------------------|-------------------------------------------|
+| `DOCKER_USERNAME` | Docker Hub username (namespace `calvinference`) |
+| `DOCKER_TOKEN`    | Docker Hub access token                   |
+
+A `calvinference/hermesmq` Docker Hub repository must exist. If the secrets are
+missing or invalid, the publish step fails loudly (it is never silently skipped).
+
+## Deployment example
+
+Run the service together with its PostgreSQL database using Docker Compose. Save
+this as `deploy-compose.yml`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hermesmq
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      # applies the journal/snapshot schema on first start
+      - ./src/main/resources/schema/postgres.sql:/docker-entrypoint-initdb.d/10-hermesmq.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermesmq"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  hermesmq:
+    image: calvinference/hermesmq:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HERMESMQ_HTTP_PORT: 8080
+      HERMESMQ_DB_HOST: postgres
+      HERMESMQ_DB_PORT: 5432
+      HERMESMQ_DB_NAME: hermesmq
+      HERMESMQ_DB_USER: hermes
+      HERMESMQ_DB_PASSWORD: change-me
+    ports:
+      - "8080:8080"
+```
+
+```bash
+docker compose -f deploy-compose.yml up -d
+curl localhost:8080/health         # -> 200 {"status":"UP",...}
+curl -i localhost:8080/health/ready # -> 200 once bound and the DB is reachable
+```
+
+### Configuration example
+
+All settings are environment variables (see the tables above). A typical
+deployment configuration:
+
+```bash
+# HTTP
+export HERMESMQ_HTTP_HOST=0.0.0.0
+export HERMESMQ_HTTP_PORT=8080
+
+# PostgreSQL persistence
+export HERMESMQ_DB_HOST=postgres.internal
+export HERMESMQ_DB_PORT=5432
+export HERMESMQ_DB_NAME=hermesmq
+export HERMESMQ_DB_USER=hermes
+export HERMESMQ_DB_PASSWORD=…        # keep out of version control
+```
 
 ## Project layout
 
 ```
-build.sbt                    # build definition (deps, versioning, publishing)
+build.sbt                    # build definition (deps, versioning, Docker, publishing)
 project/
   build.properties           # pinned sbt version
-  plugins.sbt                # sbt-dynver (tag-driven versioning)
+  plugins.sbt                # sbt-dynver + sbt-native-packager
 src/
-  main/scala/me/cference/hermesmq/   # application sources
+  main/scala/me/cference/hermesmq/
+    Main.scala               # entry point: config -> actor system -> HTTP bind
+    AppInfo.scala            # service name/version metadata
+    config/ServiceConfig.scala   # typed, validated config parsing
+    http/HealthRoutes.scala      # /health and /health/ready routes
+    http/HttpServer.scala        # bind + readiness + graceful unbind
+  main/resources/            # application.conf, logback.xml
   test/scala/me/cference/hermesmq/   # tests
 .github/workflows/           # CI and release automation
 ```
@@ -123,3 +339,30 @@ These are configured once so the pipeline is reproducible:
   skip it. Fix the coordinate/version and re-run.
 - **Wrong JDK:** building on a JDK older than the pinned minimum fails with a
   clear version error rather than producing bytecode for the wrong target.
+
+## AI Usage Disclaimer
+
+HermesMQ is built with AI assistance. [Claude](https://www.anthropic.com/claude)
+(Anthropic's Claude Code) acts as an **AI-assisted SDLC team**, contributing
+across the software-development lifecycle:
+
+- **Product / specs** — turning feature requests into acceptance criteria and specifications
+- **Architecture / design** — proposing designs, trade-offs, and decision records
+- **Implementation** — writing the Scala/Pekko code
+- **Testing** — test-first (Red → Green → Refactor); every behavior is covered by a failing test before it is implemented
+- **Review** — reviewing diffs and edge cases before changes are merged
+
+The work follows a **spec-driven workflow** ([OpenSpec](https://github.com/Fission-AI/OpenSpec)):
+each feature is proposed, designed, specified, broken into tasks, and implemented
+under test — one reviewed pull request per feature.
+
+**A human directs and is accountable.** All scope, decisions, and merges are made
+under human direction and review; the AI is an assistant, not an autonomous owner.
+Nothing here is presented as unreviewed or fully autonomous output. Use the
+software under the terms of its [license](#license) and review it for your own
+use case as you would any dependency.
+
+## License
+
+Released under the [MIT License](LICENSE) — © 2026 Calvin Ference. Permissive
+reuse with attribution; see [`LICENSE`](LICENSE) for the full text.

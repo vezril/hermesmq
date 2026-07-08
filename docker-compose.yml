@@ -1,0 +1,25 @@
+# Local PostgreSQL for running HermesMQ with the default persistence profile.
+# The schema is applied automatically on first start via the mounted init script.
+#
+#   docker compose up -d
+#   HERMESMQ_DB_HOST=localhost HERMESMQ_DB_PASSWORD=hermes sbt run
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hermesmq
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: hermes
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./src/main/resources/schema/postgres.sql:/docker-entrypoint-initdb.d/10-hermesmq.sql:ro
+      - hermesmq-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermesmq"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  hermesmq-pgdata:
