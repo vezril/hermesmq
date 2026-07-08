@@ -1,5 +1,6 @@
 package me.cference.hermesmq.grpc
 
+import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.domain.{Rejection, TopicCommand, TopicId}
 import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
 
@@ -38,7 +39,7 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
 
   /** Parse a topic id (blank/invalid → INVALID_ARGUMENT) then run `f`. */
   private def withTopicId[A](raw: String)(f: TopicId => Future[A]): Future[A] =
-    TopicId.from(raw) match
+    TenantScope.validateExternalId(raw).flatMap(TopicId.from) match
       case Right(id) => f(id)
       case Left(err) => Future.failed(GrpcErrors.invalid(err))
 

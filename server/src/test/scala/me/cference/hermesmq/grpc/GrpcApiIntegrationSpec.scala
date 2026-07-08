@@ -2,7 +2,8 @@ package me.cference.hermesmq.grpc
 
 import com.google.protobuf.ByteString
 import io.grpc.{Status, StatusRuntimeException}
-import me.cference.hermesmq.config.GrpcConfig
+import me.cference.hermesmq.auth.{Authenticator, TenantScope}
+import me.cference.hermesmq.config.{AuthConfig, GrpcConfig}
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
@@ -48,8 +49,17 @@ final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWor
 
   override protected def beforeAll(): Unit =
     super.beforeAll()
+    // Auth disabled → default tenant, unqualified ids (this suite tests wiring, not auth).
+    val authConfig    = AuthConfig(enabled = false, TenantScope.DefaultTenant, Nil)
+    val authenticator = Authenticator(Nil)
+    val scope         = new TenantScope(TenantScope.DefaultTenant)
     binding = Await.result(
-      GrpcServer.start(system, GrpcConfig("127.0.0.1", 0), TopicAdminGrpcService(topicSvc), PubSubGrpcService(topicSvc, subSvc)),
+      GrpcServer.start(
+        system,
+        GrpcConfig("127.0.0.1", 0),
+        TopicAdminPowerApi(topicSvc, authenticator, scope, authConfig),
+        PubSubPowerApi(topicSvc, subSvc, authenticator, scope, authConfig)
+      ),
       10.seconds
     )
     val settings = GrpcClientSettings.connectToServiceAt("127.0.0.1", binding.localAddress.getPort)(system).withTls(false)

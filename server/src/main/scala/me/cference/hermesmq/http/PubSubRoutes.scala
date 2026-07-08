@@ -1,5 +1,6 @@
 package me.cference.hermesmq.http
 
+import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService, TopicService}
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -59,7 +60,7 @@ final class PubSubRoutes(
       path("v1" / "topics" / Segment / "messages") { rawTopic =>
         post {
           entity(as[PublishRequest]) { req =>
-            TopicId.from(rawTopic) match
+            TenantScope.validateExternalId(rawTopic).flatMap(TopicId.from) match
               case Left(err) => complete(StatusCodes.BadRequest, err.message)
               case Right(topicId) =>
                 buildMessage(req) match
@@ -81,7 +82,10 @@ final class PubSubRoutes(
           pathEndOrSingleSlash {
             post {
               entity(as[CreateSubscriptionRequest]) { req =>
-                (SubscriptionId.from(req.subscriptionId), TopicId.from(req.topicId)) match
+                (
+                  TenantScope.validateExternalId(req.subscriptionId).flatMap(SubscriptionId.from),
+                  TenantScope.validateExternalId(req.topicId).flatMap(TopicId.from)
+                ) match
                   case (Right(sid), Right(tid)) =>
                     onComplete(subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid))) {
                       case Success(CommandReply.Accepted)    => complete(StatusCodes.Created)
@@ -138,7 +142,7 @@ final class PubSubRoutes(
     )
 
   private def withSubId(raw: String)(inner: SubscriptionId => Route): Route =
-    SubscriptionId.from(raw) match
+    TenantScope.validateExternalId(raw).flatMap(SubscriptionId.from) match
       case Right(id) => inner(id)
       case Left(err) => complete(StatusCodes.BadRequest, err.message)
 
