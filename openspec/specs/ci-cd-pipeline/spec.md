@@ -61,22 +61,22 @@ Releases SHALL follow Semantic Versioning 2.0.0 (`MAJOR.MINOR.PATCH`), with the 
 
 ### Requirement: Release automation from main
 
-A release workflow SHALL trigger on `vX.Y.Z` tags, build and verify the project, publish the versioned package to the configured registry, and create a corresponding GitHub Release.
+A release workflow SHALL trigger on `vX.Y.Z` tags, build and verify the project, publish the versioned package to the configured registry, publish the Docker image to Docker Hub (version + `latest`), and create a corresponding GitHub Release. Image and package publishing SHALL be gated behind a passing test run.
 
-#### Scenario: Tagged release publishes package and GitHub Release
+#### Scenario: Tagged release publishes package, image, and GitHub Release
 - **GIVEN** an annotated tag `v1.4.0` is pushed to a commit on `main`
 - **WHEN** the release workflow runs
-- **THEN** the test suite passes, the `1.4.0` package is published to the registry, and a GitHub Release for `v1.4.0` is created
+- **THEN** the test suite passes, the `1.4.0` package is published to the registry, the `vezril/hermesmq:1.4.0` and `:latest` images are pushed to Docker Hub, and a GitHub Release for `v1.4.0` is created
 
 #### Scenario: Failing tests abort the release before publishing
 - **GIVEN** a release tag on a commit whose tests fail
 - **WHEN** the release workflow runs
-- **THEN** publishing is skipped, no artifact is pushed to the registry, and the workflow reports failure
+- **THEN** package and image publishing are skipped, nothing is pushed to any registry, and the workflow reports failure
 
 #### Scenario: Edge case — publish credentials missing
-- **GIVEN** the registry authentication secret is absent or invalid
-- **WHEN** the release workflow reaches the publish step
-- **THEN** the workflow fails at publish with an authentication error and does not leave a partial or GitHub Release without a corresponding package
+- **GIVEN** the package registry or Docker Hub authentication secret is absent or invalid
+- **WHEN** the release workflow reaches the corresponding publish step
+- **THEN** the workflow fails at that step with an authentication error and does not leave a GitHub Release without its published artifacts
 
 ### Requirement: Branch and contribution strategy
 
