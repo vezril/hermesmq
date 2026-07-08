@@ -1,0 +1,54 @@
+# Two-node HermesMQ cluster example (Pekko Cluster Sharding) sharing one Postgres.
+#
+#   docker compose -f docker-compose.cluster.yml up -d
+#   curl localhost:8081/health/ready   # node 1
+#   curl localhost:8082/health/ready   # node 2
+#
+# Both nodes join one cluster via the shared seed-nodes list; topic/subscription
+# entities are sharded across them and the delivery projection runs on exactly
+# one node. (Multi-node delivery *completeness* — a distributed subscriptions
+# index — arrives in Feature 10b.)
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hermesmq
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: hermes
+    volumes:
+      - ./server/src/main/resources/schema/postgres.sql:/docker-entrypoint-initdb.d/10-hermesmq.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermesmq"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  node1:
+    image: calvinference/hermesmq:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HERMESMQ_HTTP_PORT: 8080
+      HERMESMQ_CLUSTER_HOST: node1
+      HERMESMQ_CLUSTER_PORT: 25520
+      HERMESMQ_CLUSTER_SEEDS: "pekko://hermesmq@node1:25520,pekko://hermesmq@node2:25520"
+      HERMESMQ_DB_HOST: postgres
+      HERMESMQ_DB_PASSWORD: hermes
+    ports:
+      - "8081:8080"
+
+  node2:
+    image: calvinference/hermesmq:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HERMESMQ_HTTP_PORT: 8080
+      HERMESMQ_CLUSTER_HOST: node2
+      HERMESMQ_CLUSTER_PORT: 25520
+      HERMESMQ_CLUSTER_SEEDS: "pekko://hermesmq@node1:25520,pekko://hermesmq@node2:25520"
+      HERMESMQ_DB_HOST: postgres
+      HERMESMQ_DB_PASSWORD: hermes
+    ports:
+      - "8082:8080"
