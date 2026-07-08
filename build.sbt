@@ -75,6 +75,8 @@ lazy val server = (project in file("server"))
     // Pekko gRPC emits generated Scala under src_managed; it is not ours to lint,
     // so silence its warnings before -Werror escalates them (our sources stay strict).
     scalacOptions += "-Wconf:src=.*src_managed.*:silent",
+    // Generate metadata-aware gRPC handlers (power APIs) for authentication.
+    pekkoGrpcCodeGeneratorSettings += "server_power_apis",
     // Exclude PostgreSQL integration tests from the default run (opt in: -Dit=true).
     Test / testOptions ++= {
       if (sys.props.get("it").contains("true")) Seq.empty

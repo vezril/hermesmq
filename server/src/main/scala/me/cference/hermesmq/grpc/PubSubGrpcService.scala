@@ -1,6 +1,7 @@
 package me.cference.hermesmq.grpc
 
 import com.google.protobuf.ByteString
+import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.grpc.{Message as ProtoMessage, PulledMessage as ProtoPulledMessage}
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage as DomainPulledMessage, SubscriptionService, TopicService}
@@ -19,14 +20,17 @@ final class PubSubGrpcService(topics: TopicService, subscriptions: SubscriptionS
     extends PubSubService:
 
   def publish(in: PublishRequest): Future[PublishResponse] =
-    (TopicId.from(in.topicId), buildMessage(in)) match
+    (TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from), buildMessage(in)) match
       case (Right(topicId), Right(message)) =>
         submitTopic(topicId, TopicCommand.Publish(message)).map(_ => PublishResponse(messageId = message.id.value))
       case (Left(err), _) => Future.failed(GrpcErrors.invalid(err))
       case (_, Left(err)) => Future.failed(GrpcErrors.invalid(err))
 
   def createSubscription(in: CreateSubscriptionRequest): Future[CreateSubscriptionResponse] =
-    (SubscriptionId.from(in.subscriptionId), TopicId.from(in.topicId)) match
+    (
+      TenantScope.validateExternalId(in.subscriptionId).flatMap(SubscriptionId.from),
+      TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from)
+    ) match
       case (Right(sid), Right(tid)) =>
         subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid)).map {
           case CommandReply.Accepted            => CreateSubscriptionResponse()
@@ -59,7 +63,7 @@ final class PubSubGrpcService(topics: TopicService, subscriptions: SubscriptionS
 
   /** Parse a subscription id (blank/invalid → INVALID_ARGUMENT) then run `f`. */
   private def withSubId[A](raw: String)(f: SubscriptionId => Future[A]): Future[A] =
-    SubscriptionId.from(raw) match
+    TenantScope.validateExternalId(raw).flatMap(SubscriptionId.from) match
       case Right(sid) => f(sid)
       case Left(err)  => Future.failed(GrpcErrors.invalid(err))
 

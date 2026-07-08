@@ -22,16 +22,16 @@ object GrpcServer:
   def start(
       system: ActorSystem[?],
       config: GrpcConfig,
-      topicAdmin: TopicAdminService,
-      pubSub: PubSubService
+      topicAdmin: TopicAdminServicePowerApi,
+      pubSub: PubSubServicePowerApi
   ): Future[ServerBinding] =
     given ClassicActorSystemProvider = system
     import system.executionContext
 
     val handler: HttpRequest => Future[HttpResponse] =
       ServiceHandler.concatOrNotFound(
-        TopicAdminServiceHandler.partial(topicAdmin),
-        PubSubServiceHandler.partial(pubSub)
+        TopicAdminServicePowerApiHandler.partial(topicAdmin),
+        PubSubServicePowerApiHandler.partial(pubSub)
       )
 
     // Enable HTTP/2 for this bind only (cleartext h2c with protocol detection).

@@ -38,7 +38,7 @@ clustering and horizontal scaling are non-goals.
 | gRPC service API (topic admin + pub/sub over HTTP/2) | ✅ Done |
 | Snapshots & journal retention (bounded recovery, event purging) | ✅ Done |
 | Observability: read models, admin listings & Prometheus metrics | ✅ Done |
-| gRPC service API | 🚧 Planned |
+| Authentication & multi-tenant isolation (REST + gRPC) | ✅ Done |
 
 ## Prerequisites
 
@@ -103,6 +103,8 @@ can be overridden by environment variables:
 | `HERMESMQ_HTTP_PORT`   | `8080`      | HTTP (REST) bind port (1–65535) |
 | `HERMESMQ_GRPC_HOST`   | `0.0.0.0`   | gRPC (HTTP/2) bind host      |
 | `HERMESMQ_GRPC_PORT`   | `8081`      | gRPC bind port (1–65535)     |
+| `HERMESMQ_AUTH_ENABLED`| `false`     | Require API-key auth on `/v1` (REST + gRPC) |
+| `HERMESMQ_AUTH_DEFAULT_TENANT` | `default` | Tenant used when auth is disabled (unqualified ids) |
 | `HERMESMQ_DB_HOST`     | `localhost` | PostgreSQL host              |
 | `HERMESMQ_DB_PORT`     | `5432`      | PostgreSQL port              |
 | `HERMESMQ_DB_NAME`     | `hermesmq`  | Database name                |
@@ -144,6 +146,49 @@ A non-positive value for either fails fast at startup.
 > and stay near the journal head, and each snapshot preserves full write-side entity
 > state (which is what delivery correctness depends on). The conservative defaults
 > keep deletion well behind the live projection head.
+
+## Authentication & multi-tenancy
+
+Auth is **off by default** — every request is served as the `default` tenant with
+unqualified ids (existing single-tenant journals keep working). Enable it with
+`HERMESMQ_AUTH_ENABLED=true` and configure API keys; then every `/v1` REST and gRPC
+request needs a key resolving to a tenant. `/health*` and `/metrics` stay open for
+probes and scraping.
+
+**Isolation** is by tenant-namespacing: the external `topicId`/`subscriptionId` a
+tenant uses is qualified internally (`<tenant>~<id>`), so two tenants can both use
+`orders` and never see each other's data. External ids may not contain `~`.
+
+**Scopes:** topic administration (create/update/delete) requires the `admin` scope;
+publish/consume/list require any valid key for the caller's tenant.
+
+Keys are stored as salted SHA-256 hashes — never the raw token. Generate one:
+
+```bash
+SALT=$(head -c16 /dev/urandom | base64)
+HASH=$(printf '%s' "$(printf '%s' "$SALT" | base64 -d; printf '%s' "my-secret-token")" | openssl dgst -binary -sha256 | base64)
+# Put { tenant, salt=$SALT, hash=$HASH, scopes=[...] } in hermesmq.auth.keys
+```
+
+```hocon
+hermesmq.auth {
+  enabled = true
+  keys = [ { tenant = "acme", salt = "…", hash = "…", scopes = ["admin"] } ]
+}
+```
+
+```bash
+curl -H 'Authorization: Bearer my-secret-token' localhost:8080/v1/topics   # REST
+# gRPC: send metadata `authorization: Bearer my-secret-token` (or `x-api-key`)
+curl localhost:8080/health                                                 # open, no key
+```
+
+Missing/invalid credentials return REST `401` / gRPC `UNAUTHENTICATED`; a missing
+scope returns `403` / `PERMISSION_DENIED`.
+
+> **Future:** JWT/OIDC and mTLS are out of scope for now (static salted-hash keys
+> keep the broker dependency-light); `/metrics` is unauthenticated by design for
+> internal scraping.
 
 ## Topic Admin API
 

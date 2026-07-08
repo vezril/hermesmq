@@ -2,10 +2,11 @@ package me.cference.hermesmq
 
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
-import me.cference.hermesmq.config.{DbConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig}
+import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
+import me.cference.hermesmq.config.{AuthConfig, DbConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig}
 import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection}
-import me.cference.hermesmq.grpc.{GrpcServer, PubSubGrpcService, TopicAdminGrpcService}
-import me.cference.hermesmq.http.{HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
+import me.cference.hermesmq.grpc.{GrpcServer, PubSubPowerApi, TopicAdminPowerApi}
+import me.cference.hermesmq.http.{Auth, HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
 import me.cference.hermesmq.observability.{JdbcSubscriptionStatsRepository, JdbcTopicStatsRepository, ObservabilityRoutes, SubscriptionStatsProjection, TopicStatsProjection}
 import me.cference.hermesmq.persistence.PersistenceHealth
 import org.apache.pekko.actor.typed.ActorSystem
@@ -37,14 +38,15 @@ object Main:
         dbConfig         <- DbConfig.from(rawConfig)
         redeliveryConfig <- RedeliveryConfig.from(rawConfig)
         retentionConfig  <- RetentionConfig.from(rawConfig)
-      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig)
+        authConfig       <- AuthConfig.from(rawConfig)
+      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig)) =>
+      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig)) =>
         val persistenceHealth = PersistenceHealth(dbConfig)
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
@@ -119,10 +121,21 @@ object Main:
             stopMessage = ProjectionBehavior.Stop
           )
 
+          // Authentication + multi-tenancy boundary.
+          val authenticator = Authenticator(authConfig.keys)
+          val tenantScope   = new TenantScope(authConfig.defaultTenant)
+
+          // REST: /metrics is public; /v1 requires auth and is tenant-scoped.
+          val observability = ObservabilityRoutes(subStatsRepo, topicStatsRepo)
           val apiRoutes =
-            TopicAdminRoutes(topicService).routes ~
-              PubSubRoutes(topicService, subscriptionService).routes ~
-              ObservabilityRoutes(subStatsRepo, topicStatsRepo).routes
+            observability.metricsRoute ~
+              Auth.authenticate(authenticator, authConfig) { principal =>
+                val scopedTopics = TenantScopedTopicService(topicService, tenantScope, principal.tenant)
+                val scopedSubs   = TenantScopedSubscriptionService(subscriptionService, tenantScope, principal.tenant)
+                TopicAdminRoutes(scopedTopics, principal).routes ~
+                  PubSubRoutes(scopedTopics, scopedSubs).routes ~
+                  observability.listings(principal, tenantScope)
+              }
 
           HttpServer.start(ctx.system, serviceConfig, AppInfo.Version, readiness, apiRoutes).onComplete {
             case Success(binding) =>
@@ -132,9 +145,9 @@ object Main:
               ctx.system.terminate()
           }
 
-          // gRPC endpoint (HTTP/2), served alongside REST over the same services.
-          val topicAdminGrpc = TopicAdminGrpcService(topicService)
-          val pubSubGrpc     = PubSubGrpcService(topicService, subscriptionService)
+          // gRPC endpoint (HTTP/2): metadata-aware power APIs authenticate + tenant-scope.
+          val topicAdminGrpc = TopicAdminPowerApi(topicService, authenticator, tenantScope, authConfig)
+          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig)
           GrpcServer.start(ctx.system, grpcConfig, topicAdminGrpc, pubSubGrpc).onComplete {
             case Success(binding) =>
               ctx.log.info("HermesMQ gRPC listening on {}", binding.localAddress)
