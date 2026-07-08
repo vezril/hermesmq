@@ -1,9 +1,12 @@
 package me.cference.hermesmq.grpc
 
 import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
-import me.cference.hermesmq.config.AuthConfig
+import me.cference.hermesmq.config.{AuthConfig, StreamConfig}
 import me.cference.hermesmq.persistence.{SubscriptionService, TopicService}
+import org.apache.pekko.NotUsed
+import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.grpc.scaladsl.Metadata
+import org.apache.pekko.stream.scaladsl.Source
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -42,8 +45,9 @@ final class PubSubPowerApi(
     baseSubs: SubscriptionService,
     authenticator: Authenticator,
     scope: TenantScope,
-    config: AuthConfig
-)(using ExecutionContext)
+    config: AuthConfig,
+    streamConfig: StreamConfig = StreamConfig.Default
+)(using ExecutionContext, ActorSystem)
     extends PubSubServicePowerApi:
 
   def publish(in: PublishRequest, metadata: Metadata): Future[PublishResponse] =
@@ -57,8 +61,19 @@ final class PubSubPowerApi(
   def modifyAckDeadline(in: ModifyAckDeadlineRequest, metadata: Metadata): Future[ModifyAckDeadlineResponse] =
     authed(metadata)(_.modifyAckDeadline(in))
 
+  def streamMessages(in: StreamRequest, metadata: Metadata): Source[PulledMessage, NotUsed] =
+    GrpcAuth.principal(metadata, authenticator, config) match
+      case None    => Source.failed(GrpcErrors.unauthenticated)
+      case Some(p) => scoped(p).streamMessages(in)
+
+  private def scoped(p: me.cference.hermesmq.auth.Principal): PubSubGrpcService =
+    new PubSubGrpcService(
+      new TenantScopedTopicService(baseTopics, scope, p.tenant),
+      new TenantScopedSubscriptionService(baseSubs, scope, p.tenant),
+      streamConfig
+    )
+
   private def authed[A](metadata: Metadata)(f: PubSubGrpcService => Future[A]): Future[A] =
     GrpcAuth.principal(metadata, authenticator, config) match
-      case None => Future.failed(GrpcErrors.unauthenticated)
-      case Some(p) =>
-        f(new PubSubGrpcService(new TenantScopedTopicService(baseTopics, scope, p.tenant), new TenantScopedSubscriptionService(baseSubs, scope, p.tenant)))
+      case None    => Future.failed(GrpcErrors.unauthenticated)
+      case Some(p) => f(scoped(p))

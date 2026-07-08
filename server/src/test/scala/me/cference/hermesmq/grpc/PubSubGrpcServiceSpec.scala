@@ -4,17 +4,20 @@ import com.google.protobuf.ByteString
 import io.grpc.Status
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.*
+import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.wordspec.AnyWordSpec
+import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.time.Instant
 import scala.concurrent.{Await, Future}
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
 /** Tests the pub/sub gRPC handler against stub services (no socket). */
-final class PubSubGrpcServiceSpec extends AnyWordSpec with Matchers:
+final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matchers:
+
+  private given org.apache.pekko.actor.ActorSystem = system.classicSystem
+  private given scala.concurrent.ExecutionContext  = system.executionContext
 
   private val ackId = AckId.from("ack-1").toOption.get
   private val message = Message
@@ -41,6 +44,24 @@ final class PubSubGrpcServiceSpec extends AnyWordSpec with Matchers:
     def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]]         = Future.successful(pullReply)
 
   private def service(t: TopicService = topics(), s: SubscriptionService = subs()) = PubSubGrpcService(t, s)
+
+  "PubSubGrpcService.streamMessages" should {
+    "stream the subscription's leased messages" in {
+      val svc = service(s = subs(pullReply = Some(List(PulledMessage(ackId, message)))))
+      val got = Await.result(
+        svc.streamMessages(StreamRequest(subscriptionId = "s1", max = 1)).take(2).runWith(org.apache.pekko.stream.scaladsl.Sink.seq),
+        3.seconds
+      )
+      got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
+      got.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
+    }
+
+    "fail the stream NOT_FOUND for an unknown subscription" in {
+      val svc = service(s = subs(pullReply = None))
+      statusOfFailure(svc.streamMessages(StreamRequest(subscriptionId = "ghost", max = 10)).runWith(org.apache.pekko.stream.scaladsl.Sink.ignore)) shouldBe
+        Status.Code.NOT_FOUND
+    }
+  }
 
   "PubSubGrpcService" should {
     "publish a message and return a non-empty messageId" in {
