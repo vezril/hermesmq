@@ -48,12 +48,17 @@ lazy val root = (project in file("."))
     // --- Docker image settings (sbt-native-packager) ---
     dockerBaseImage    := "eclipse-temurin:21-jre",
     dockerExposedPorts := Seq(8080),
-    dockerUpdateLatest := true,
+    // Publish to Docker Hub as docker.io/vezril/hermesmq. Username follows the
+    // DOCKER_USERNAME secret in CI, defaulting to "vezril" locally.
+    dockerRepository := Some("docker.io"),
+    dockerUsername   := Some(sys.env.getOrElse("DOCKER_USERNAME", "vezril")),
     Docker / packageName := "hermesmq",
+    // Only releases move the `latest` tag; the release workflow sets this env,
+    // development snapshot pushes leave `latest` untouched.
+    dockerUpdateLatest := sys.env.get("DOCKER_UPDATE_LATEST").contains("true"),
     // dynver snapshot versions contain '+', which is illegal in a Docker tag —
     // sanitize to '-' for the image tag only (publish versions are unchanged).
     Docker / version := version.value.replace('+', '-'),
-    dockerUsername     := Some(sys.env.getOrElse("DOCKER_USERNAME", "vezril")),
     // Run as a non-root user (least privilege).
     Docker / daemonUser  := "hermes",
     dockerLabels := Map(
