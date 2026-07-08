@@ -87,8 +87,9 @@ Two GitHub Actions workflows drive the pipeline:
   a GitHub Release. Malformed tags (e.g. `v1.2`, `release-1`) do not match the
   trigger pattern and never start a release.
 
-Packages publish to `https://maven.pkg.github.com/<owner>/hermesmq`, authenticated
-with the workflow's built-in `GITHUB_TOKEN`.
+Packages publish to `https://maven.pkg.github.com/vezril/hermesmq`, authenticated
+with the workflow's built-in `GITHUB_TOKEN`. (The workflows derive the owner from
+`github.repository_owner`, so this stays correct across forks/renames.)
 
 ### Cutting a release
 
@@ -101,9 +102,13 @@ git push origin main --follow-tags
 
 ## Required GitHub settings
 
-These are configured once in the repository settings so the pipeline is
-reproducible:
+These are configured once so the pipeline is reproducible:
 
+0. **Remote** — the canonical repository is `github.com/vezril/hermesmq`:
+   ```bash
+   git remote add origin https://github.com/vezril/hermesmq.git
+   git push -u origin main development --follow-tags
+   ```
 1. **Branch protection** on `main` and `development`:
    - Require the `CI / Compile & Test` status check to pass before merging.
    - Require pull requests before merging (no direct pushes).

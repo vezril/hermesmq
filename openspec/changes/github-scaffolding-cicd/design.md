@@ -65,6 +65,6 @@ Rollback: workflows and skeleton are additive files; reverting the commits resto
 
 ## Resolved Questions
 
-- **GitHub owner / package namespace**: `cference` (personal account owns the repo). Release and snapshot packages publish to GitHub Packages at `https://maven.pkg.github.com/cference/hermesmq`; the workflow derives the owner dynamically from `github.repository_owner` so it stays correct if forked/renamed.
+- **GitHub owner / package namespace**: `vezril` (personal account owns the repo at `github.com/vezril/hermesmq`). Release and snapshot packages publish to GitHub Packages at `https://maven.pkg.github.com/vezril/hermesmq`; the workflow derives the owner dynamically from `github.repository_owner` so it stays correct if forked/renamed. Note: the Scala `organization`/groupId is `me.cference.hermesmq` (a domain-style namespace) and is intentionally distinct from the GitHub owner.
 - **`organization` / `groupId`**: `me.cference.hermesmq` in `build.sbt`.
 - **`development` publishing**: `development` **auto-publishes** snapshot packages on every push. Because `sbt-dynver` yields a unique commit-derived version off-tag, each snapshot has a distinct version and does not collide with immutable GitHub Packages entries. Release tags on `main` publish the clean `X.Y.Z`.

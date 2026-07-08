@@ -21,8 +21,8 @@ ThisBuild / scalacOptions ++= Seq(
 
 // Publish to GitHub Packages. The owner is resolved from the environment in CI
 // (github.repository_owner) so it stays correct across forks/renames; it falls
-// back to "cference" for local `sbt publish`.
-lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "cference")
+// back to "vezril" for local `sbt publish`.
+lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "vezril")
 
 lazy val pekkoVersion     = "1.1.3"
 lazy val scalaTestVersion = "3.2.19"
