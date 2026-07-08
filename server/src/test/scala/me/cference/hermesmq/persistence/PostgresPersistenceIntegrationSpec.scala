@@ -1,6 +1,7 @@
 package me.cference.hermesmq.persistence
 
 import com.typesafe.config.ConfigFactory
+import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.domain.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.scalatest.BeforeAndAfterAll
@@ -10,6 +11,7 @@ import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 
+import java.sql.DriverManager
 import java.time.Instant
 import scala.concurrent.duration.*
 
@@ -122,4 +124,48 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       val e3 = testKit.spawn(SubscriptionEntity(subId))
       doPull(e3, t0.plusSeconds(400)) shouldBe Some(Nil) // dead-lettered message did not come back
     }
+
+    "snapshot and retain: bound the journal and recover state across a restart" taggedAs PostgresIT in {
+      assume(dockerAvailable, "Docker is not available")
+
+      val subId   = SubscriptionId.from("sub-snapshot-it").toOption.get
+      val topicId = TopicId.from("orders").toOption.get
+      val msg     = Message.from(MessageId.from("m-snap").toOption.get, "body".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z")).toOption.get
+      val reply   = testKit.createTestProbe[CommandReply]()
+      val pull    = testKit.createTestProbe[Option[List[PulledMessage]]]()
+      // Aggressive retention so deletion is easy to observe against the real journal.
+      val retention = RetentionConfig(snapshotEveryEvents = 2, keepNSnapshots = 1)
+      val pid       = SubscriptionEntity.persistenceId(subId).id
+      val delivered = 12
+
+      val e1 = testKit.spawn(SubscriptionEntity(subId, retention))
+      e1 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.CreateSubscription(subId, topicId), reply.ref)
+      reply.expectMessage(20.seconds, CommandReply.Accepted)
+      (1 to delivered).foreach { i =>
+        val ackId = AckId.from(s"ack-$i").toOption.get
+        e1 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.RecordDelivery(ackId, msg), reply.ref)
+        reply.expectMessage(20.seconds, CommandReply.Accepted)
+      }
+
+      // The journal is bounded: old events were deleted on snapshot, so far fewer
+      // than the (1 create + `delivered`) events persisted remain in Postgres.
+      journalRowCount(pid) should be < (delivered + 1)
+
+      // Restart: the entity recovers its outstanding set from snapshot + surviving events.
+      testKit.stop(e1)
+      val e2 = testKit.spawn(SubscriptionEntity(subId, retention))
+      e2 ! SubscriptionEntityCommand.Pull(delivered + 10, 30.seconds, Instant.parse("2026-07-07T12:00:00Z"), pull.ref)
+      pull.receiveMessage(20.seconds).getOrElse(Nil).size shouldBe delivered
+    }
   }
+
+  /** Count journaled events for a persistence id directly in Postgres. */
+  private def journalRowCount(persistenceId: String): Int =
+    val conn = DriverManager.getConnection(container.getJdbcUrl, container.getUsername, container.getPassword)
+    try
+      val ps = conn.prepareStatement("SELECT count(*) FROM event_journal WHERE persistence_id = ?")
+      ps.setString(1, persistenceId)
+      val rs = ps.executeQuery()
+      rs.next()
+      rs.getInt(1)
+    finally conn.close()

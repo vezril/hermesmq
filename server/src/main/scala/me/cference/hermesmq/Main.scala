@@ -2,7 +2,7 @@ package me.cference.hermesmq
 
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
-import me.cference.hermesmq.config.{DbConfig, GrpcConfig, RedeliveryConfig, ServiceConfig}
+import me.cference.hermesmq.config.{DbConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig}
 import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection}
 import me.cference.hermesmq.grpc.{GrpcServer, PubSubGrpcService, TopicAdminGrpcService}
 import me.cference.hermesmq.http.{HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
@@ -35,14 +35,15 @@ object Main:
         grpcConfig       <- GrpcConfig.from(rawConfig)
         dbConfig         <- DbConfig.from(rawConfig)
         redeliveryConfig <- RedeliveryConfig.from(rawConfig)
-      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig)
+        retentionConfig  <- RetentionConfig.from(rawConfig)
+      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig)) =>
+      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig)) =>
         val persistenceHealth = PersistenceHealth(dbConfig)
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
@@ -52,8 +53,8 @@ object Main:
 
           // Cluster Sharding: one writer per id across the cluster.
           val sharding = ClusterSharding(ctx.system)
-          TopicSharding.init(sharding)
-          SubscriptionSharding.init(sharding)
+          TopicSharding.init(sharding, retentionConfig)
+          SubscriptionSharding.init(sharding, retentionConfig)
           val topicService        = ShardedTopicService(sharding)
           val subscriptionService = ShardedSubscriptionService(sharding, redeliveryConfig.ackDeadline)
 

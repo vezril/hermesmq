@@ -36,6 +36,7 @@ clustering and horizontal scaling are non-goals.
 | Cluster-complete delivery (durable, shared subscriptions read model) | ✅ Done |
 | Redelivery timers, ack-deadline expiry, and dead-lettering | ✅ Done |
 | gRPC service API (topic admin + pub/sub over HTTP/2) | ✅ Done |
+| Snapshots & journal retention (bounded recovery, event purging) | ✅ Done |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
 
@@ -120,6 +121,29 @@ can be overridden by environment variables:
 An invalid or out-of-range port — or a non-positive ack-deadline / sweep-interval,
 or a negative max-delivery-attempts — fails fast at startup with a clear error and
 a non-zero exit code.
+
+### Snapshots & journal retention
+
+The event-sourced Topic and Subscription aggregates snapshot periodically so
+recovery replays only the events after the latest snapshot, and delete journaled
+events older than the retained snapshots so the journal stays bounded (acknowledged
+messages are eventually purged). Snapshots serialize explicitly (Java serialization
+stays off) and are transparent — a snapshot-bounded recovery yields exactly the
+state a full replay would.
+
+| Variable                  | Default | Description                                                    |
+|---------------------------|---------|----------------------------------------------------------------|
+| `HERMESMQ_SNAPSHOT_EVERY` | `100`   | Persist a state snapshot every this many events                 |
+| `HERMESMQ_SNAPSHOT_KEEP`  | `2`     | Recent snapshots to retain; older events are deleted on snapshot |
+
+A non-positive value for either fails fast at startup.
+
+> **Trade-off:** because events older than the retained snapshots are deleted, the
+> journal is not an infinite audit log and read models cannot be rebuilt from a
+> from-zero replay once events are purged. The projections are maintained forward
+> and stay near the journal head, and each snapshot preserves full write-side entity
+> state (which is what delivery correctness depends on). The conservative defaults
+> keep deletion well behind the live projection head.
 
 ## Topic Admin API
 
