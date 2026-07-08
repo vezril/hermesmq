@@ -1,0 +1,57 @@
+name: CI
+
+# Runs on every pull request and on pushes to the integration/release branches.
+# Serves as the required status check for branch protection.
+on:
+  pull_request:
+  push:
+    branches:
+      - development
+      - main
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Compile & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for sbt-dynver)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 (Temurin) with sbt cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # Compile first so a compilation failure fails fast, before tests run.
+      - name: Compile
+        run: sbt -v compile
+
+      - name: Test
+        run: sbt -v test
+
+      # Auto-publish a snapshot to GitHub Packages on every push to
+      # `development`. sbt-dynver gives each commit a unique version, so
+      # snapshots never collide with immutable registry entries. Skipped on
+      # pull requests and on `main` (main ships via release.yml on tags).
+      - name: Publish development snapshot
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        run: sbt -v publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}

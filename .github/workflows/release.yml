@@ -1,0 +1,54 @@
+name: Release
+
+# Triggers only on SemVer release tags (vMAJOR.MINOR.PATCH). Malformed tags
+# such as `v1.2` or `release-1` do not match this pattern and never start a
+# release.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write   # create the GitHub Release
+  packages: write   # publish the package to GitHub Packages
+
+jobs:
+  release:
+    name: Build, Publish & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for sbt-dynver)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 (Temurin) with sbt cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # Gate: a red commit at the release tag aborts here, before anything is
+      # published.
+      - name: Test (release gate)
+        run: sbt -v test
+
+      # Fails loudly with an auth error if the token is missing/invalid, and
+      # GitHub Packages rejects overwriting an already-published immutable
+      # version rather than clobbering it.
+      - name: Publish package to GitHub Packages
+        run: sbt -v publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+
+      # Last step, so a GitHub Release is never created without the package
+      # having been published first.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --title "${GITHUB_REF_NAME}"
