@@ -8,12 +8,12 @@ Define publishing the Docker image to Docker Hub: the versioned + `latest` taggi
 
 ### Requirement: Release image published to Docker Hub
 
-On a `vX.Y.Z` release, the pipeline SHALL build the Docker image and push it to Docker Hub under `docker.io/vezril/hermesmq`, tagged with the exact release version `X.Y.Z` and also `latest`, authenticating with the `DOCKER_USERNAME` / `DOCKER_TOKEN` secrets.
+On a `vX.Y.Z` release, the pipeline SHALL build the Docker image and push it to Docker Hub under `docker.io/calvinference/hermesmq`, tagged with the exact release version `X.Y.Z` and also `latest`, authenticating with the `DOCKER_USERNAME` / `DOCKER_TOKEN` secrets.
 
 #### Scenario: Release pushes versioned and latest tags
 - **GIVEN** an annotated tag `v1.4.0` is pushed and the release workflow's tests pass
 - **WHEN** the image publish step runs
-- **THEN** `vezril/hermesmq:1.4.0` and `vezril/hermesmq:latest` are pushed to Docker Hub and are pullable
+- **THEN** `calvinference/hermesmq:1.4.0` and `calvinference/hermesmq:latest` are pushed to Docker Hub and are pullable
 
 #### Scenario: Image publish is gated behind a green build
 - **GIVEN** a release tag on a commit whose tests fail
@@ -37,7 +37,7 @@ On a push to `development`, the pipeline SHALL build and push a snapshot-tagged 
 #### Scenario: Development push publishes a snapshot image without latest
 - **GIVEN** a commit pushed to `development` with passing tests
 - **WHEN** the image publish step runs
-- **THEN** a uniquely snapshot-tagged `vezril/hermesmq` image is pushed and `latest` is unchanged
+- **THEN** a uniquely snapshot-tagged `calvinference/hermesmq` image is pushed and `latest` is unchanged
 
 #### Scenario: Edge case — pull requests do not publish images
 - **GIVEN** a pull request build (not a push to `development` or a release tag)

@@ -21,10 +21,10 @@ The README SHALL display status badges near the title for at least: the CI workf
 - **WHEN** a reader views the top of the README
 - **THEN** CI, release, license, and Docker Hub badges are shown, each linking to the corresponding workflow, release page, license, or image
 
-#### Scenario: Edge case — badge targets reference the correct repository
-- **GIVEN** the repository `vezril/hermesmq`
+#### Scenario: Edge case — badge targets reference the correct sources
+- **GIVEN** the GitHub repository `vezril/hermesmq` and the Docker Hub image `calvinference/hermesmq`
 - **WHEN** the badge and link URLs are resolved
-- **THEN** they point at `vezril/hermesmq` (workflow, releases, Docker Hub), not a placeholder or a different repo
+- **THEN** the CI/release/license badges point at `vezril/hermesmq` and the Docker Hub badge points at `calvinference/hermesmq`, not a placeholder or a different target
 
 ### Requirement: AI usage disclaimer
 
@@ -51,6 +51,6 @@ The README SHALL provide a copy-pasteable deployment example (the service plus i
 - **THEN** it uses the actual `HERMESMQ_HTTP_*` and `HERMESMQ_DB_*` variables with sensible values
 
 #### Scenario: Edge case — examples reference the published image and correct ports
-- **GIVEN** the published image `vezril/hermesmq` and the default port `8080`
+- **GIVEN** the published image `calvinference/hermesmq` and the default port `8080`
 - **WHEN** the deployment example is read
 - **THEN** it uses that image name and exposes/maps port `8080` consistently with the rest of the README

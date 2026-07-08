@@ -54,7 +54,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      # Build and push docker.io/vezril/hermesmq:<version> and :latest.
+      # Build and push docker.io/calvinference/hermesmq:<version> and :latest.
       # DOCKER_UPDATE_LATEST=true so a release moves the `latest` tag.
       - name: Publish image to Docker Hub
         run: sbt -v Docker/publish

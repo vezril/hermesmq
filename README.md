@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/vezril/hermesmq/actions/workflows/ci.yml/badge.svg)](https://github.com/vezril/hermesmq/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/vezril/hermesmq?sort=semver)](https://github.com/vezril/hermesmq/releases)
-[![Docker Hub](https://img.shields.io/docker/v/vezril/hermesmq?label=docker&sort=semver)](https://hub.docker.com/r/vezril/hermesmq)
+[![Docker Hub](https://img.shields.io/docker/v/calvinference/hermesmq?label=docker&sort=semver)](https://hub.docker.com/r/calvinference/hermesmq)
 [![License: MIT](https://img.shields.io/github/license/vezril/hermesmq)](LICENSE)
 
 A single-node, **event-sourced Pub/Sub message broker** built in Scala on
@@ -140,12 +140,12 @@ The service is packaged into a container image with `sbt-native-packager`
 tag tracking the project version):
 
 ```bash
-sbt Docker/publishLocal                             # build image locally
-docker run -p 8080:8080 vezril/hermesmq:latest      # run it
-curl localhost:8080/health                          # -> 200
+sbt Docker/publishLocal                                    # build image locally
+docker run -p 8080:8080 calvinference/hermesmq:latest      # run it
+curl localhost:8080/health                                 # -> 200
 
 # override the port at run time
-docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 vezril/hermesmq:latest
+docker run -e HERMESMQ_HTTP_PORT=9091 -p 9091:9091 calvinference/hermesmq:latest
 ```
 
 `docker stop` sends `SIGTERM`, so the container shuts down gracefully within the
@@ -154,11 +154,11 @@ stop grace period.
 ### Published images (Docker Hub)
 
 Released images are published to
-[`docker.io/vezril/hermesmq`](https://hub.docker.com/r/vezril/hermesmq):
+[`docker.io/calvinference/hermesmq`](https://hub.docker.com/r/calvinference/hermesmq):
 
 ```bash
-docker pull vezril/hermesmq:latest       # newest release
-docker pull vezril/hermesmq:1.4.0        # a specific release
+docker pull calvinference/hermesmq:latest   # newest release
+docker pull calvinference/hermesmq:1.4.0    # a specific release
 ```
 
 Tagging scheme (single-platform `linux/amd64` for now):
@@ -174,11 +174,11 @@ can push:
 
 | Secret            | Purpose                                   |
 |-------------------|-------------------------------------------|
-| `DOCKER_USERNAME` | Docker Hub username (namespace `vezril`)  |
+| `DOCKER_USERNAME` | Docker Hub username (namespace `calvinference`) |
 | `DOCKER_TOKEN`    | Docker Hub access token                   |
 
-A `vezril/hermesmq` Docker Hub repository must exist. If the secrets are missing
-or invalid, the publish step fails loudly (it is never silently skipped).
+A `calvinference/hermesmq` Docker Hub repository must exist. If the secrets are
+missing or invalid, the publish step fails loudly (it is never silently skipped).
 
 ## Deployment example
 
@@ -203,7 +203,7 @@ services:
       retries: 5
 
   hermesmq:
-    image: vezril/hermesmq:latest
+    image: calvinference/hermesmq:latest
     depends_on:
       postgres:
         condition: service_healthy
