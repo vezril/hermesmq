@@ -78,3 +78,14 @@ CREATE TABLE IF NOT EXISTS public.topic_subscriptions (
     subscription_id VARCHAR(255) NOT NULL,
     PRIMARY KEY (topic_id, subscription_id)
 );
+
+-- Durable, cluster-shared outstanding-lease read model (redelivery/ack-deadline),
+-- maintained by a projection over subscription lease-lifecycle events; queried by
+-- the redelivery sweeper to find overdue leases without scanning the entities.
+CREATE TABLE IF NOT EXISTS public.outstanding_leases (
+    subscription_id VARCHAR(255) NOT NULL,
+    ack_id          VARCHAR(255) NOT NULL,
+    deadline        TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (subscription_id, ack_id)
+);
+CREATE INDEX IF NOT EXISTS outstanding_leases_deadline_idx ON public.outstanding_leases (deadline);

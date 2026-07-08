@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Instant
 import java.util.UUID
 import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.duration.*
 import scala.util.{Failure, Success}
 
 /** JSON models for the pub/sub API. */
@@ -23,16 +24,20 @@ final case class PulledMessageJson(ackId: String, payload: String, attributes: M
 final case class PullResponse(messages: List[PulledMessageJson])
 final case class AckRequest(ackIds: List[String])
 final case class AckResponse(acknowledged: List[String], unknown: List[String])
+final case class ModifyAckDeadlineRequest(ackIds: List[String], ackDeadlineSeconds: Int)
+final case class ModifyAckDeadlineResponse(modified: List[String], unknown: List[String])
 
 object PubSubJson extends DefaultJsonProtocol:
-  given RootJsonFormat[PublishRequest]           = jsonFormat2(PublishRequest.apply)
-  given RootJsonFormat[PublishResponse]          = jsonFormat1(PublishResponse.apply)
+  given RootJsonFormat[PublishRequest]            = jsonFormat2(PublishRequest.apply)
+  given RootJsonFormat[PublishResponse]           = jsonFormat1(PublishResponse.apply)
   given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat2(CreateSubscriptionRequest.apply)
-  given RootJsonFormat[PullRequest]              = jsonFormat1(PullRequest.apply)
-  given RootJsonFormat[PulledMessageJson]        = jsonFormat4(PulledMessageJson.apply)
-  given RootJsonFormat[PullResponse]             = jsonFormat1(PullResponse.apply)
-  given RootJsonFormat[AckRequest]               = jsonFormat1(AckRequest.apply)
-  given RootJsonFormat[AckResponse]              = jsonFormat2(AckResponse.apply)
+  given RootJsonFormat[PullRequest]               = jsonFormat1(PullRequest.apply)
+  given RootJsonFormat[PulledMessageJson]         = jsonFormat4(PulledMessageJson.apply)
+  given RootJsonFormat[PullResponse]              = jsonFormat1(PullResponse.apply)
+  given RootJsonFormat[AckRequest]                = jsonFormat1(AckRequest.apply)
+  given RootJsonFormat[AckResponse]               = jsonFormat2(AckResponse.apply)
+  given RootJsonFormat[ModifyAckDeadlineRequest]  = jsonFormat2(ModifyAckDeadlineRequest.apply)
+  given RootJsonFormat[ModifyAckDeadlineResponse] = jsonFormat2(ModifyAckDeadlineResponse.apply)
 
 /** REST endpoints for publishing to topics and consuming from subscriptions.
   * Payloads are treated as UTF-8 text on the REST surface. Delegates to the
@@ -113,6 +118,20 @@ final class PubSubRoutes(
                 }
               }
             }
+          },
+          // Modify ack deadline: POST /v1/subscriptions/{id}/modifyAckDeadline
+          path(Segment / "modifyAckDeadline") { rawSub =>
+            post {
+              entity(as[ModifyAckDeadlineRequest]) { req =>
+                withSubId(rawSub) { sid =>
+                  onComplete(modifyDeadlines(sid, req.ackIds, req.ackDeadlineSeconds)) {
+                    case Success(Some(response)) => complete(response)
+                    case Success(None)           => complete(StatusCodes.NotFound)
+                    case Failure(_)              => complete(StatusCodes.ServiceUnavailable)
+                  }
+                }
+              }
+            }
           }
         )
       }
@@ -134,6 +153,40 @@ final class PubSubRoutes(
       attributes = pm.message.attributes,
       publishTime = pm.message.publishTime.toString
     )
+
+  /** Modify (extend or nack) the deadline of each id. Returns `None` when the
+    * subscription does not exist (probed with a zero-max, side-effect-free pull),
+    * otherwise partitions the ids into modified vs unknown/not-modified.
+    */
+  private def modifyDeadlines(
+      sid: SubscriptionId,
+      ackIds: List[String],
+      deadlineSeconds: Int
+  ): Future[Option[ModifyAckDeadlineResponse]] =
+    subscriptions.pull(sid, 0).flatMap {
+      case None => Future.successful(None)
+      case Some(_) =>
+        val now      = Instant.now()
+        val deadline = deadlineSeconds.seconds
+        Future
+          .traverse(ackIds) { raw =>
+            AckId.from(raw) match
+              case Left(_) => Future.successful((raw, false))
+              case Right(a) =>
+                subscriptions.submit(sid, SubscriptionCommand.ModifyAckDeadline(a, deadline, now)).map {
+                  case CommandReply.Accepted    => (raw, true)
+                  case CommandReply.Rejected(_) => (raw, false)
+                }
+          }
+          .map { results =>
+            Some(
+              ModifyAckDeadlineResponse(
+                modified = results.collect { case (r, true) => r },
+                unknown = results.collect { case (r, false) => r }
+              )
+            )
+          }
+    }
 
   /** Acknowledge each id, partitioning into acknowledged vs unknown. */
   private def acknowledgeAll(sid: SubscriptionId, ackIds: List[String]): Future[AckResponse] =

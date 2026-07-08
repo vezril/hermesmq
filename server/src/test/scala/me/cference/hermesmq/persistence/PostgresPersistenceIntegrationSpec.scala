@@ -10,6 +10,7 @@ import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 
+import java.time.Instant
 import scala.concurrent.duration.*
 
 /** End-to-end persistence against a real PostgreSQL (Testcontainers). Tagged
@@ -72,5 +73,53 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       val second = testKit.spawn(SubscriptionEntity(subId))
       second ! SubscriptionEntityCommand.Submit(SubscriptionCommand.CreateSubscription(subId, topicId), probe.ref)
       probe.expectMessage(20.seconds,CommandReply.Rejected(Rejection.SubscriptionAlreadyExists))
+    }
+
+    "lease, expire, redeliver, and finally dead-letter across attempts, surviving restarts" taggedAs PostgresIT in {
+      assume(dockerAvailable, "Docker is not available")
+
+      val subId    = SubscriptionId.from("sub-redeliver").toOption.get
+      val topicId  = TopicId.from("orders").toOption.get
+      val ackId    = AckId.from("ack-redeliver").toOption.get
+      val message  = Message.from(MessageId.from("m-redeliver").toOption.get, "body".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z")).toOption.get
+      val deadline = 30.seconds
+      val t0       = Instant.parse("2026-07-07T12:00:00Z")
+      val maxAtt   = 3
+
+      val reply = testKit.createTestProbe[CommandReply]()
+      val pull  = testKit.createTestProbe[Option[List[PulledMessage]]]()
+      def submit(entity: org.apache.pekko.actor.typed.ActorRef[SubscriptionEntityCommand], cmd: SubscriptionCommand): Unit =
+        entity ! SubscriptionEntityCommand.Submit(cmd, reply.ref)
+        reply.expectMessage(20.seconds, CommandReply.Accepted)
+      def doPull(entity: org.apache.pekko.actor.typed.ActorRef[SubscriptionEntityCommand], now: Instant): Option[List[PulledMessage]] =
+        entity ! SubscriptionEntityCommand.Pull(10, deadline, now, pull.ref)
+        pull.receiveMessage(20.seconds)
+
+      // Publish (record delivery) → the message is AVAILABLE.
+      val e1 = testKit.spawn(SubscriptionEntity(subId))
+      submit(e1, SubscriptionCommand.CreateSubscription(subId, topicId))
+      submit(e1, SubscriptionCommand.RecordDelivery(ackId, message))
+
+      // Pull leases it; a second pull within the deadline sees nothing.
+      doPull(e1, t0) shouldBe Some(List(PulledMessage(ackId, message)))
+      doPull(e1, t0.plusSeconds(1)) shouldBe Some(Nil)
+
+      // No ack: the sweep expires the overdue lease (attempt 1 < max) → redeliverable.
+      submit(e1, SubscriptionCommand.ExpireAckDeadline(ackId, t0.plusSeconds(31), maxAtt))
+      doPull(e1, t0.plusSeconds(31)) shouldBe Some(List(PulledMessage(ackId, message)))
+
+      // Restart mid-flight: the attempt count and lease survive recovery.
+      testKit.stop(e1)
+      val e2 = testKit.spawn(SubscriptionEntity(subId))
+      submit(e2, SubscriptionCommand.ExpireAckDeadline(ackId, t0.plusSeconds(62), maxAtt)) // attempt 2 < max
+      doPull(e2, t0.plusSeconds(62)) shouldBe Some(List(PulledMessage(ackId, message)))
+
+      // Third expiry reaches the limit → dead-lettered and removed; stays gone.
+      submit(e2, SubscriptionCommand.ExpireAckDeadline(ackId, t0.plusSeconds(200), maxAtt)) // attempt 3 == max
+      doPull(e2, t0.plusSeconds(300)) shouldBe Some(Nil)
+
+      testKit.stop(e2)
+      val e3 = testKit.spawn(SubscriptionEntity(subId))
+      doPull(e3, t0.plusSeconds(400)) shouldBe Some(Nil) // dead-lettered message did not come back
     }
   }
