@@ -1,9 +1,10 @@
 package me.cference.hermesmq.persistence
 
+import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.domain.{Subscription, SubscriptionCommand, SubscriptionEvent, SubscriptionId, SubscriptionState}
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 import org.apache.pekko.persistence.typed.PersistenceId
-import org.apache.pekko.persistence.typed.scaladsl.{Effect, EventSourcedBehavior}
+import org.apache.pekko.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, RetentionCriteria}
 
 import java.time.Instant
 import scala.concurrent.duration.FiniteDuration
@@ -29,7 +30,10 @@ object SubscriptionEntity:
   def persistenceId(subscriptionId: SubscriptionId): PersistenceId =
     PersistenceId.ofUniqueId(s"Subscription|${subscriptionId.value}")
 
-  def apply(subscriptionId: SubscriptionId): Behavior[SubscriptionEntityCommand] =
+  def apply(
+      subscriptionId: SubscriptionId,
+      retention: RetentionConfig = RetentionConfig.Default
+  ): Behavior[SubscriptionEntityCommand] =
     EventSourcedBehavior[SubscriptionEntityCommand, SubscriptionEvent, SubscriptionState](
       persistenceId = persistenceId(subscriptionId),
       emptyState = Subscription.empty,
@@ -44,7 +48,11 @@ object SubscriptionEntity:
       case _: SubscriptionEvent.SubscriptionCreated => Set(CreatedTag)
       case _: SubscriptionEvent.MessageDelivered    => Set.empty
       case _                                        => Set(LeaseTag)
-    }
+    }.withRetention(
+      RetentionCriteria
+        .snapshotEvery(numberOfEvents = retention.snapshotEveryEvents, keepNSnapshots = retention.keepNSnapshots)
+        .withDeleteEventsOnSnapshot
+    )
 
   /** Lease up to `max` AVAILABLE messages: persist `MessageLeased`, then reply
     * with those messages. `None` when the subscription does not exist.

@@ -1,5 +1,6 @@
 package me.cference.hermesmq.cluster
 
+import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.domain.SubscriptionId
 import me.cference.hermesmq.persistence.{SubscriptionEntity, SubscriptionEntityCommand}
 import org.apache.pekko.actor.typed.ActorRef
@@ -13,8 +14,11 @@ object SubscriptionSharding:
 
   val TypeKey: EntityTypeKey[SubscriptionEntityCommand] = EntityTypeKey[SubscriptionEntityCommand]("Subscription")
 
-  def init(sharding: ClusterSharding): ActorRef[ShardingEnvelope[SubscriptionEntityCommand]] =
-    sharding.init(Entity(TypeKey)(ctx => SubscriptionEntity(SubscriptionId.from(ctx.entityId).toOption.get)))
+  def init(
+      sharding: ClusterSharding,
+      retention: RetentionConfig = RetentionConfig.Default
+  ): ActorRef[ShardingEnvelope[SubscriptionEntityCommand]] =
+    sharding.init(Entity(TypeKey)(ctx => SubscriptionEntity(SubscriptionId.from(ctx.entityId).toOption.get, retention)))
 
   def entityRef(sharding: ClusterSharding, subscriptionId: SubscriptionId): EntityRef[SubscriptionEntityCommand] =
     sharding.entityRefFor(TypeKey, subscriptionId.value)

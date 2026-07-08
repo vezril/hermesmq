@@ -1,5 +1,6 @@
 package me.cference.hermesmq.cluster
 
+import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.domain.TopicId
 import me.cference.hermesmq.persistence.{TopicEntity, TopicEntityCommand}
 import org.apache.pekko.actor.typed.ActorRef
@@ -14,8 +15,11 @@ object TopicSharding:
 
   val TypeKey: EntityTypeKey[TopicEntityCommand] = EntityTypeKey[TopicEntityCommand]("Topic")
 
-  def init(sharding: ClusterSharding): ActorRef[ShardingEnvelope[TopicEntityCommand]] =
-    sharding.init(Entity(TypeKey)(ctx => TopicEntity(TopicId.from(ctx.entityId).toOption.get)))
+  def init(
+      sharding: ClusterSharding,
+      retention: RetentionConfig = RetentionConfig.Default
+  ): ActorRef[ShardingEnvelope[TopicEntityCommand]] =
+    sharding.init(Entity(TypeKey)(ctx => TopicEntity(TopicId.from(ctx.entityId).toOption.get, retention)))
 
   def entityRef(sharding: ClusterSharding, topicId: TopicId): EntityRef[TopicEntityCommand] =
     sharding.entityRefFor(TypeKey, topicId.value)

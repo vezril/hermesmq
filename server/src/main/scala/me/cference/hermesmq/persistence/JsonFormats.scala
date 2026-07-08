@@ -118,3 +118,55 @@ object JsonFormats extends DefaultJsonProtocol:
             o.fields("attempt").convertTo[Int]
           )
         case other => deserializationError(s"unknown SubscriptionEvent type: $other")
+
+  // --- Aggregate state (snapshot) formats -----------------------------------
+  // Reads are tolerant of absent fields so a state shape can evolve without
+  // orphaning existing snapshots.
+
+  given RootJsonFormat[LeaseState] with
+    def write(l: LeaseState): JsValue = l match
+      case LeaseState.Available        => JsObject("type" -> JsString("Available"))
+      case LeaseState.Leased(deadline) => JsObject("type" -> JsString("Leased"), "deadline" -> deadline.toJson)
+    def read(json: JsValue): LeaseState =
+      val o = json.asJsObject
+      o.fields("type").convertTo[String] match
+        case "Available" => LeaseState.Available
+        case "Leased"    => LeaseState.Leased(o.fields("deadline").convertTo[Instant])
+        case other       => deserializationError(s"unknown LeaseState type: $other")
+
+  given RootJsonFormat[Outstanding] with
+    def write(o: Outstanding): JsValue =
+      JsObject("message" -> o.message.toJson, "lease" -> o.lease.toJson, "attempts" -> JsNumber(o.attempts))
+    def read(json: JsValue): Outstanding =
+      val o = json.asJsObject
+      Outstanding(
+        o.fields("message").convertTo[Message],
+        o.fields.getOrElse("lease", JsObject("type" -> JsString("Available"))).convertTo[LeaseState],
+        o.fields.getOrElse("attempts", JsNumber(0)).convertTo[Int]
+      )
+
+  given RootJsonFormat[TopicState] with
+    def write(s: TopicState): JsValue =
+      JsObject("topicId" -> s.topicId.toJson, "labels" -> s.labels.toJson, "deleted" -> JsBoolean(s.deleted))
+    def read(json: JsValue): TopicState =
+      val o = json.asJsObject
+      TopicState(
+        o.fields.getOrElse("topicId", JsNull).convertTo[Option[TopicId]],
+        o.fields.getOrElse("labels", JsObject()).convertTo[Map[String, String]],
+        o.fields.getOrElse("deleted", JsBoolean(false)).convertTo[Boolean]
+      )
+
+  given RootJsonFormat[SubscriptionState] with
+    def write(s: SubscriptionState): JsValue =
+      JsObject(
+        "subscriptionId" -> s.subscriptionId.toJson,
+        "topicId"        -> s.topicId.toJson,
+        "outstanding"    -> s.outstanding.toJson
+      )
+    def read(json: JsValue): SubscriptionState =
+      val o = json.asJsObject
+      SubscriptionState(
+        o.fields.getOrElse("subscriptionId", JsNull).convertTo[Option[SubscriptionId]],
+        o.fields.getOrElse("topicId", JsNull).convertTo[Option[TopicId]],
+        o.fields.getOrElse("outstanding", JsObject()).convertTo[Map[AckId, Outstanding]]
+      )
