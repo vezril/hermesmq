@@ -18,6 +18,21 @@ object TopicEntity:
     */
   val MessageTag = "topic-message"
 
+  /** Tag applied to topic lifecycle + publish events so the topic-stats
+    * projection can fold per-topic throughput and existence.
+    */
+  val StatsTag = "topic-stats"
+
+  /** Tags for an event: the delivery projection sees `MessagePublished`; the
+    * stats projection sees create/publish/delete. Pure so it is testable.
+    */
+  def tagsFor(event: TopicEvent): Set[String] =
+    event match
+      case _: TopicEvent.MessagePublished => Set(MessageTag, StatsTag)
+      case _: TopicEvent.TopicCreated     => Set(StatsTag)
+      case _: TopicEvent.TopicDeleted     => Set(StatsTag)
+      case _                              => Set.empty
+
   /** Persistence id scheme for a topic. */
   def persistenceId(topicId: TopicId): PersistenceId =
     PersistenceId.ofUniqueId(s"Topic|${topicId.value}")
@@ -33,10 +48,7 @@ object TopicEntity:
           case TopicEntityCommand.Query(replyTo) =>
             Effect.none.thenReply(replyTo)(_ => snapshot(state)),
       eventHandler = Topic.evolve
-    ).withTagger {
-      case _: TopicEvent.MessagePublished => Set(MessageTag)
-      case _                              => Set.empty
-    }.withRetention(
+    ).withTagger(tagsFor).withRetention(
       RetentionCriteria
         .snapshotEvery(numberOfEvents = retention.snapshotEveryEvents, keepNSnapshots = retention.keepNSnapshots)
         .withDeleteEventsOnSnapshot

@@ -6,6 +6,7 @@ import me.cference.hermesmq.config.{DbConfig, GrpcConfig, RedeliveryConfig, Rete
 import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection}
 import me.cference.hermesmq.grpc.{GrpcServer, PubSubGrpcService, TopicAdminGrpcService}
 import me.cference.hermesmq.http.{HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
+import me.cference.hermesmq.observability.{JdbcSubscriptionStatsRepository, JdbcTopicStatsRepository, ObservabilityRoutes, SubscriptionStatsProjection, TopicStatsProjection}
 import me.cference.hermesmq.persistence.PersistenceHealth
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
@@ -61,6 +62,8 @@ object Main:
           // Durable, cluster-shared read models.
           val subscriptionsRepo = JdbcTopicSubscriptionsRepository(dbConfig)
           val leaseRepo         = JdbcOutstandingLeaseRepository(dbConfig)
+          val subStatsRepo      = JdbcSubscriptionStatsRepository(dbConfig)
+          val topicStatsRepo    = JdbcTopicStatsRepository(dbConfig)
 
           // Single cluster-wide projections: maintain the index, fan out deliveries,
           // track outstanding leases, and route dead-lettered messages.
@@ -101,8 +104,25 @@ object Main:
             stopMessage = RedeliverySweeper.Stop
           )
 
+          // Single cluster-wide observability projections (exactly-once so counters
+          // are not double-counted on replay): per-subscription and per-topic stats.
+          ShardedDaemonProcess(ctx.system).init(
+            name = "subscription-stats-projection",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) => ProjectionBehavior(SubscriptionStatsProjection(ctx.system, dbConfig)),
+            stopMessage = ProjectionBehavior.Stop
+          )
+          ShardedDaemonProcess(ctx.system).init(
+            name = "topic-stats-projection",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) => ProjectionBehavior(TopicStatsProjection(ctx.system, dbConfig)),
+            stopMessage = ProjectionBehavior.Stop
+          )
+
           val apiRoutes =
-            TopicAdminRoutes(topicService).routes ~ PubSubRoutes(topicService, subscriptionService).routes
+            TopicAdminRoutes(topicService).routes ~
+              PubSubRoutes(topicService, subscriptionService).routes ~
+              ObservabilityRoutes(subStatsRepo, topicStatsRepo).routes
 
           HttpServer.start(ctx.system, serviceConfig, AppInfo.Version, readiness, apiRoutes).onComplete {
             case Success(binding) =>
