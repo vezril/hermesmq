@@ -30,7 +30,8 @@ clustering and horizontal scaling are non-goals.
 | Durable persistence on a configurable database (PostgreSQL) | ✅ Done |
 | Docker image published to Docker Hub | ✅ Done |
 | Topic management (create/delete/update) over a REST admin API | ✅ Done |
-| Message delivery, redelivery, and ack-deadline expiry | 🚧 Planned |
+| Publish & consume messages (at-least-once, projection-driven delivery, pull-based) | ✅ Done |
+| Redelivery timers and ack-deadline expiry | 🚧 Planned |
 | Query side: projections / read models (backlog, throughput, admin) | 🚧 Planned |
 | gRPC service API | 🚧 Planned |
 
@@ -129,8 +130,44 @@ curl -X PATCH localhost:8080/v1/topics/orders \
 curl -X DELETE localhost:8080/v1/topics/orders                # 204
 ```
 
-> A gRPC API (per the architecture) and message publish/consume land in later
-> features; this feature covers topic management over REST.
+> A gRPC API (per the architecture) lands in a later feature; topic management
+> and publish/consume are available over REST today.
+
+## Publish & Consume
+
+Publish messages to a topic and consume them from subscriptions (pull-based).
+Published messages are delivered **at least once** to every subscription on the
+topic by a Pekko Projection that tails the topic journal — delivery is durable
+and survives restarts.
+
+| Method & path                          | Body                                   | Result |
+|-----------------------------------------|----------------------------------------|--------|
+| `POST /v1/topics/{id}/messages`         | `{"payload":"…","attributes":{…}}`     | `202` `{messageId}` · `404` · `400` |
+| `POST /v1/subscriptions`                | `{"subscriptionId":"s1","topicId":"orders"}` | `201` · `409` |
+| `POST /v1/subscriptions/{id}/pull`      | `{"max":10}`                           | `200` `{messages:[{ackId,payload,attributes,publishTime}]}` · `404` |
+| `POST /v1/subscriptions/{id}/ack`       | `{"ackIds":["…"]}`                     | `200` `{acknowledged,unknown}` |
+
+```bash
+curl -X POST localhost:8080/v1/subscriptions \
+  -H 'Content-Type: application/json' -d '{"subscriptionId":"s1","topicId":"orders"}'   # 201
+
+curl -X POST localhost:8080/v1/topics/orders/messages \
+  -H 'Content-Type: application/json' -d '{"payload":"hello","attributes":{"k":"v"}}'   # 202 {messageId}
+
+curl -X POST localhost:8080/v1/subscriptions/s1/pull \
+  -H 'Content-Type: application/json' -d '{"max":10}'    # 200 {messages:[{ackId,payload,…}]}
+
+curl -X POST localhost:8080/v1/subscriptions/s1/ack \
+  -H 'Content-Type: application/json' -d '{"ackIds":["s1:<messageId>"]}'   # 200
+```
+
+**Delivery guarantee (and current limits):** at-least-once. The `ackId` is
+deterministic per `(subscription, message)`, so a projection replay re-delivers
+idempotently and does not duplicate an outstanding message. Not yet implemented
+(planned): ack-deadline expiry / redelivery timers, exactly-once, back-delivery
+of messages published before a subscription existed, and rebuilding the in-memory
+topic→subscriptions index from the journal on restart. REST payloads are treated
+as UTF-8 text.
 
 ## Persistence
 
