@@ -39,6 +39,7 @@ clustering and horizontal scaling are non-goals.
 | Snapshots & journal retention (bounded recovery, event purging) | ✅ Done |
 | Observability: read models, admin listings & Prometheus metrics | ✅ Done |
 | Authentication & multi-tenant isolation (REST + gRPC) | ✅ Done |
+| Streaming consume (server-streaming gRPC) | ✅ Done |
 
 ## Prerequisites
 
@@ -283,7 +284,7 @@ The contract lives in [`server/src/main/protobuf/hermes.proto`](server/src/main/
 | Service | RPCs |
 |---------|------|
 | `TopicAdminService` | `CreateTopic`, `GetTopic`, `UpdateTopic`, `DeleteTopic` |
-| `PubSubService`     | `Publish`, `CreateSubscription`, `Pull`, `Ack`, `ModifyAckDeadline` |
+| `PubSubService`     | `Publish`, `CreateSubscription`, `Pull`, `StreamMessages`, `Ack`, `ModifyAckDeadline` |
 
 `Pull` leases messages exactly as REST pull does; `Ack`/`ModifyAckDeadline` accept a
 batch and report which ids were applied vs unknown. Domain rejections map to gRPC
@@ -305,6 +306,28 @@ yield ack.messageId
 ```
 
 Any gRPC client works — generate stubs from `hermes.proto` in your language of choice.
+
+### Streaming consume
+
+`StreamMessages(StreamRequest) returns (stream PulledMessage)` pushes leased messages
+to a consumer over a single long-lived call instead of polling `Pull`. The stream is
+**demand-driven**: the server leases further messages only as the consumer takes them,
+so a slow consumer stops new leases (messages stay AVAILABLE) rather than being
+over-leased. An idle stream re-checks for new messages every `HERMESMQ_STREAM_POLL_INTERVAL`
+(default `1s`), leasing up to `HERMESMQ_STREAM_BATCH_SIZE` (default `100`) per step.
+
+Acknowledge received messages with the **unary `Ack`** RPC (the stream is push-only);
+anything unacked redelivers via the sweeper as usual. Cancelling or disconnecting the
+stream stops leasing cleanly — undelivered leases simply lapse and redeliver. An unknown
+subscription fails `NOT_FOUND`; auth and tenant-scoping work exactly as for the unary calls.
+
+```scala
+pubsub.streamMessages(StreamRequest(subscriptionId = "s1"))
+  .runForeach { m => process(m); /* then: pubsub.ack(AckRequest("s1", Seq(m.ackId))) */ }
+```
+
+> **Future:** bidirectional streaming (acking over the same stream) is a natural next
+> step; today ack stays on the unary `Ack`.
 
 ## Observability
 

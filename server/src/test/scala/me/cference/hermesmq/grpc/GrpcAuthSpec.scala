@@ -5,18 +5,21 @@ import me.cference.hermesmq.auth.{AuthKey, Authenticator, TenantId, TenantScope}
 import me.cference.hermesmq.config.AuthConfig
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.*
+import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
 import org.apache.pekko.grpc.scaladsl.{Metadata, MetadataBuilder}
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.wordspec.AnyWordSpec
+import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.util.Base64
 import scala.concurrent.{Await, Future}
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
 /** Tests gRPC authentication + authorization via call metadata on the power APIs. */
-final class GrpcAuthSpec extends AnyWordSpec with Matchers:
+final class GrpcAuthSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matchers:
+
+  private given org.apache.pekko.actor.ActorSystem = system.classicSystem
+  private given scala.concurrent.ExecutionContext  = system.executionContext
 
   private val salt      = Base64.getEncoder.encodeToString("salt".getBytes)
   private val adminTok  = "admin-token"
@@ -66,5 +69,10 @@ final class GrpcAuthSpec extends AnyWordSpec with Matchers:
     "allow a non-admin token to pull (data-plane)" in {
       Await.result(pubApi.pull(PullRequest(subscriptionId = "s1", max = 10), bearer(dataTok)), 3.seconds)
       succeed
+    }
+
+    "reject an unauthenticated stream with UNAUTHENTICATED" in {
+      statusOfFailure(pubApi.streamMessages(StreamRequest(subscriptionId = "s1", max = 10), noAuth).runWith(org.apache.pekko.stream.scaladsl.Sink.ignore)) shouldBe
+        Status.Code.UNAUTHENTICATED
     }
   }
