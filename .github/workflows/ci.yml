@@ -73,6 +73,6 @@ jobs:
 
       - name: Publish development snapshot image
         if: github.event_name == 'push' && github.ref == 'refs/heads/development' && env.DOCKERHUB_ENABLED == 'true'
-        run: sbt -v Docker/publish
+        run: sbt -v server/Docker/publish
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
