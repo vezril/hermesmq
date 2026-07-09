@@ -26,6 +26,10 @@ jobs:
     # image push is skipped (not failed) until the secrets are added.
     env:
       DOCKERHUB_ENABLED: ${{ secrets.DOCKER_TOKEN != '' }}
+      # Resolve io.codex %% lexicon-hermes-grpc from the-lexicon's GitHub Packages.
+      # The built-in token may lack cross-repo package read; if so, set a
+      # LEXICON_PACKAGES_TOKEN secret (a read:packages PAT), which is preferred.
+      GITHUB_TOKEN: ${{ secrets.LEXICON_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout (full history for sbt-dynver)
         uses: actions/checkout@v4

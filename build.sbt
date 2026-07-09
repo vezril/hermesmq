@@ -32,11 +32,16 @@ ThisBuild / scalacOptions ++= Seq(
 
 lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "vezril")
 
-lazy val pekkoVersion           = "1.1.3"
-lazy val pekkoHttpVersion       = "1.1.0"
-lazy val pekkoJdbcVersion       = "1.1.0"
-lazy val pekkoProjectionVersion = "1.1.0"
+lazy val pekkoVersion           = "1.2.0"
+lazy val pekkoHttpVersion       = "1.2.0"
+lazy val pekkoJdbcVersion       = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
+lazy val pekkoProjectionVersion = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
 lazy val scalaTestVersion       = "3.2.19"
+// The gRPC contract is sourced from the Lexicon (change adopt-lexicon-grpc-contracts);
+// pinned exactly so a mismatch is a build error. This must be the-lexicon release
+// that first ships `lexicon-hermes-grpc` (its add-hermes-grpc-contract, expected
+// v0.4.0). Verified locally against the byte-identical publishLocal stubs.
+lazy val lexiconVersion         = "0.4.0"
 lazy val logbackVersion         = "1.5.16"
 lazy val sprayJsonVersion       = "1.3.6"
 lazy val postgresVersion        = "42.7.4"
@@ -56,6 +61,16 @@ lazy val publishSettings = Seq(
 // Modules that are not published as libraries (root aggregate, server image).
 lazy val noPublish = Seq(publish / skip := true, publishArtifact := false)
 
+// Resolve the shared HermesMQ gRPC stubs (io.codex %% lexicon-hermes-grpc) from the
+// Lexicon's GitHub Packages. Needs a GITHUB_TOKEN with read:packages locally + in CI.
+ThisBuild / resolvers += "GitHub Packages — the-lexicon".at("https://maven.pkg.github.com/vezril/the-lexicon")
+ThisBuild / credentials += Credentials(
+  "GitHub Package Registry",
+  "maven.pkg.github.com",
+  "vezril",
+  sys.env.getOrElse("GITHUB_TOKEN", "")
+)
+
 // --- domain: pure value types & aggregates, no external dependencies ---------
 lazy val domain = (project in file("domain"))
   .settings(publishSettings *)
@@ -67,16 +82,13 @@ lazy val domain = (project in file("domain"))
 // --- server: the service + Docker image --------------------------------------
 lazy val server = (project in file("server"))
   .dependsOn(domain)
-  .enablePlugins(JavaAppPackaging, DockerPlugin, PekkoGrpcPlugin)
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(noPublish *)
   .settings(
     name := "hermesmq-server",
     Compile / mainClass := Some("me.cference.hermesmq.Main"),
-    // Pekko gRPC emits generated Scala under src_managed; it is not ours to lint,
-    // so silence its warnings before -Werror escalates them (our sources stay strict).
-    scalacOptions += "-Wconf:src=.*src_managed.*:silent",
-    // Generate metadata-aware gRPC handlers (power APIs) for authentication.
-    pekkoGrpcCodeGeneratorSettings += "server_power_apis",
+    // The gRPC stubs (server power API + client) come from the Lexicon artifact;
+    // no local pekko-grpc codegen runs here (the contract left this repo).
     // Exclude PostgreSQL integration tests from the default run (opt in: -Dit=true).
     Test / testOptions ++= {
       if (sys.props.get("it").contains("true")) Seq.empty
@@ -96,6 +108,8 @@ lazy val server = (project in file("server"))
       "org.opencontainers.image.source" -> "https://github.com/vezril/hermesmq"
     ),
     libraryDependencies ++= Seq(
+      // Shared HermesMQ gRPC stubs (server power API + client) — the contract lives in the Lexicon.
+      "io.codex"         %% "lexicon-hermes-grpc"           % lexiconVersion,
       "org.apache.pekko" %% "pekko-actor-typed"             % pekkoVersion,
       "org.apache.pekko" %% "pekko-cluster-typed"           % pekkoVersion,
       "org.apache.pekko" %% "pekko-cluster-sharding-typed"  % pekkoVersion,
