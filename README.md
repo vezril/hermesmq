@@ -57,8 +57,14 @@ Scala itself (3.3 LTS) is resolved by sbt — no separate install needed.
 ## Build
 
 ```bash
+export GITHUB_TOKEN=<a PAT with read:packages>   # to resolve the Lexicon gRPC stubs
 sbt compile
 ```
+
+The gRPC service stubs come from the **Lexicon** artifact `io.codex %% lexicon-hermes-grpc`
+(pinned in `build.sbt`), resolved from `the-lexicon`'s GitHub Packages — so a `GITHUB_TOKEN`
+with `read:packages` is required locally and in CI (set `LEXICON_PACKAGES_TOKEN` as the CI
+secret if the built-in token lacks cross-repo package read). No gRPC codegen runs in this repo.
 
 ## Run the tests
 
@@ -305,7 +311,11 @@ architecture's primary API — served over cleartext HTTP/2 (h2c) on its own por
 (`HERMESMQ_GRPC_PORT`, default `8081`), alongside REST. TLS is expected to be
 terminated by a proxy, mirroring the REST surface.
 
-The contract lives in [`server/src/main/protobuf/hermes.proto`](server/src/main/protobuf/hermes.proto):
+The gRPC contract is defined in the **[Lexicon](https://github.com/vezril/the-lexicon)** —
+the constellation's shared source of truth for wire contracts — and this repo generates its
+server stubs from the pinned `io.codex %% lexicon-hermes-grpc` artifact rather than a local
+`.proto`. Resolving it from the Lexicon's GitHub Packages needs a `GITHUB_TOKEN` with
+`read:packages` (see [Build](#build)). The service surface is unchanged by the move:
 
 | Service | RPCs |
 |---------|------|
@@ -331,7 +341,9 @@ for
 yield ack.messageId
 ```
 
-Any gRPC client works — generate stubs from `hermes.proto` in your language of choice.
+Any gRPC client works — generate stubs from the Lexicon's
+[`hermes.proto`](https://github.com/vezril/the-lexicon/blob/main/hermes-grpc/src/main/protobuf/hermesmq/v1/hermes.proto)
+in your language of choice, or consume the published `lexicon-hermes-grpc` (JVM) stubs.
 
 ### Streaming consume
 
