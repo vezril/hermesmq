@@ -1,10 +1,25 @@
 <configuration>
-  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+  <!-- Log format is selected by the LOG_FORMAT env var: "json" (set by the
+       Docker image) emits one structured JSON object per event for Loki / the
+       self-healing loop; unset (local `sbt run`) stays human-readable text. -->
+  <property name="LOG_APPENDER" value="${LOG_FORMAT:-text}"/>
+
+  <appender name="text" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
       <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
     </encoder>
   </appender>
+
+  <!-- Constellation-wide schema: @timestamp, level, logger_name, thread_name,
+       message, service, stack_trace (on error), and MDC entries as top-level
+       fields — produced by logstash-logback-encoder. -->
+  <appender name="json" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <customFields>{"service":"hermesmq"}</customFields>
+    </encoder>
+  </appender>
+
   <root level="INFO">
-    <appender-ref ref="STDOUT" />
+    <appender-ref ref="${LOG_APPENDER}"/>
   </root>
 </configuration>

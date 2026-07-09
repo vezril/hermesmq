@@ -43,6 +43,7 @@ lazy val scalaTestVersion       = "3.2.19"
 // v0.4.0). Verified locally against the byte-identical publishLocal stubs.
 lazy val lexiconVersion         = "0.5.0"
 lazy val logbackVersion         = "1.5.16"
+lazy val logstashLogbackVersion = "8.0"
 lazy val sprayJsonVersion       = "1.3.6"
 lazy val postgresVersion        = "42.7.4"
 lazy val testcontainersVersion  = "1.20.4"
@@ -97,6 +98,8 @@ lazy val server = (project in file("server"))
     // --- Docker image (docker.io/calvinference/hermesmq) ---
     dockerBaseImage    := "eclipse-temurin:21-jre",
     dockerExposedPorts := Seq(8080, 8081),
+    // Shipped image logs structured JSON (for Loki); local `sbt run` (no env) stays text.
+    dockerEnvVars      := Map("LOG_FORMAT" -> "json"),
     dockerRepository   := Some("docker.io"),
     dockerUsername     := Some(sys.env.getOrElse("DOCKER_USERNAME", "calvinference")),
     Docker / packageName := "hermesmq",
@@ -127,6 +130,7 @@ lazy val server = (project in file("server"))
       "io.spray"         %% "spray-json"                    % sprayJsonVersion,
       "org.postgresql"    % "postgresql"                    % postgresVersion,
       "ch.qos.logback"    % "logback-classic"               % logbackVersion,
+      "net.logstash.logback" % "logstash-logback-encoder"   % logstashLogbackVersion,
       "org.apache.pekko" %% "pekko-actor-testkit-typed"     % pekkoVersion          % Test,
       "org.apache.pekko" %% "pekko-http-testkit"            % pekkoHttpVersion      % Test,
       "org.apache.pekko" %% "pekko-persistence-testkit"     % pekkoVersion          % Test,

@@ -44,6 +44,7 @@ clustering and horizontal scaling are non-goals.
 | Message TTL / expiry (drop-on-expiry, sweeper-purged) | ✅ Done |
 | Idempotent publish (producer key dedup within a window) | ✅ Done |
 | Schema self-migration on boot (idempotent, opt-out) | ✅ Done |
+| Structured JSON logging (`LOG_FORMAT`, constellation schema) | ✅ Done |
 
 ## Prerequisites
 
@@ -450,6 +451,21 @@ double-counted on replay. Counts are maintained **forward**: because journal
 retention purges old events, these read models cannot be rebuilt from a
 from-zero replay once events are deleted — the projections run continuously from
 first start, so live counts stay accurate.
+
+### Logging
+
+Log format is selected by `LOG_FORMAT`. The **Docker image defaults to
+`LOG_FORMAT=json`** — one structured JSON object per event, ready for Loki and
+the constellation's error-tracking / self-healing loop — while local `sbt run`
+(no env set) stays human-readable **text**. Set `LOG_FORMAT=text` in-container to
+override, or `LOG_FORMAT=json` locally to preview.
+
+JSON logs use the constellation-wide field schema (via
+[`logstash-logback-encoder`](https://github.com/logfellow/logstash-logback-encoder))
+so queries resolve identically across services: `@timestamp`, `level`,
+`logger_name`, `thread_name`, `message`, `service` (here `hermesmq`),
+`stack_trace` (on error), plus any MDC entries as top-level fields. This is a
+format-only concern — log levels and call sites are unchanged.
 
 ## Scala client library
 
