@@ -1,7 +1,9 @@
 name: CI
 
 # Runs on every pull request and on pushes to the integration/release branches.
-# Serves as the required status check for branch protection.
+# The `Compile & Test` job is the required status check for branch protection;
+# it does compile + test ONLY, so registry flakiness in the snapshot publish can
+# never fail the check that gates merges.
 on:
   pull_request:
   push:
@@ -22,10 +24,7 @@ jobs:
   build:
     name: Compile & Test
     runs-on: ubuntu-latest
-    # 'true' only when Docker Hub secrets are configured, so the development
-    # image push is skipped (not failed) until the secrets are added.
     env:
-      DOCKERHUB_ENABLED: ${{ secrets.DOCKER_TOKEN != '' }}
       # Resolve io.codex %% lexicon-hermes-grpc from the-lexicon's GitHub Packages.
       # The built-in token may lack cross-repo package read; if so, set a
       # LEXICON_PACKAGES_TOKEN secret (a read:packages PAT), which is preferred.
@@ -53,30 +52,72 @@ jobs:
       - name: Test
         run: sbt -v test
 
-      # Auto-publish a snapshot to GitHub Packages on every push to
-      # `development`. sbt-dynver gives each commit a unique version, so
-      # snapshots never collide with immutable registry entries. Skipped on
-      # pull requests and on `main` (main ships via release.yml on tags).
-      - name: Publish development snapshot
-        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
-        run: sbt -v publish
+  # Auto-publish a snapshot on every push to `development`. This is a SEPARATE,
+  # non-required job: registry hiccups (a Docker Hub 504, an already-published
+  # 409) surface here as a red advisory job without ever blocking a PR merge,
+  # since only `Compile & Test` gates branch protection. Skipped on pull
+  # requests and on `main` (main ships via release.yml on tags).
+  publish-snapshot:
+    name: Publish dev snapshot
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    runs-on: ubuntu-latest
+    env:
+      # 'true' only when Docker Hub secrets are configured, so the image push is
+      # skipped (not failed) until the secrets are added.
+      DOCKERHUB_ENABLED: ${{ secrets.DOCKER_TOKEN != '' }}
+      # Same cross-repo read token as the build job, so resolving the Lexicon
+      # stubs during `publish` works.
+      GITHUB_TOKEN: ${{ secrets.LEXICON_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout (full history for sbt-dynver)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 (Temurin) with sbt cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # sbt-dynver gives each commit a unique version, so a normal push never
+      # collides. A manual re-run of the same commit, however, re-attempts the
+      # already-published version and GitHub Packages returns 409 (immutable) —
+      # we treat that specific case as success so a re-run goes green instead of
+      # red. Any other failure still fails the step.
+      - name: Publish snapshot to GitHub Packages (tolerate already-published 409)
+        run: |
+          set -o pipefail
+          if sbt -v publish 2>&1 | tee publish.log; then
+            echo "Snapshot published."
+          elif grep -q "response code: 409" publish.log; then
+            echo "::notice::Snapshot already published for this commit (409) — treating as success."
+          else
+            echo "::error::Snapshot publish failed for a non-409 reason."
+            exit 1
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
 
-      # Publish a snapshot-tagged image to Docker Hub on development pushes only,
-      # and only when the Docker Hub secrets are configured (otherwise skipped,
-      # so dev CI stays green until they are added). `latest` is left untouched.
-      # Never runs on pull requests or on main.
+      # Publish a snapshot-tagged image to Docker Hub, only when the Docker Hub
+      # secrets are configured (otherwise skipped, so dev CI stays green until
+      # they are added). `latest` is left untouched. Docker Hub allows
+      # re-pushing the same tag, so a re-run after a transient 504 self-heals.
       - name: Log in to Docker Hub
-        if: github.event_name == 'push' && github.ref == 'refs/heads/development' && env.DOCKERHUB_ENABLED == 'true'
+        if: env.DOCKERHUB_ENABLED == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Publish development snapshot image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/development' && env.DOCKERHUB_ENABLED == 'true'
+        if: env.DOCKERHUB_ENABLED == 'true'
         run: sbt -v server/Docker/publish
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
