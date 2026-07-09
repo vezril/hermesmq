@@ -41,19 +41,24 @@ object JsonFormats extends DefaultJsonProtocol:
       case other => deserializationError(s"expected number, got $other")
 
   given RootJsonFormat[Message] with
-    def write(m: Message): JsValue = JsObject(
-      "id"          -> m.id.toJson,
-      "payload"     -> JsString(Base64.getEncoder.encodeToString(m.payload.toArray)),
-      "attributes"  -> m.attributes.toJson,
-      "publishTime" -> JsString(m.publishTime.toString)
-    )
+    def write(m: Message): JsValue =
+      val base = Map(
+        "id"          -> m.id.toJson,
+        "payload"     -> JsString(Base64.getEncoder.encodeToString(m.payload.toArray)),
+        "attributes"  -> m.attributes.toJson,
+        "publishTime" -> JsString(m.publishTime.toString)
+      )
+      // Omit expireTime when absent so messages without a TTL serialize as before.
+      JsObject(m.expireTime.fold(base)(t => base + ("expireTime" -> JsString(t.toString))))
     def read(json: JsValue): Message =
       val o           = json.asJsObject
       val id          = o.fields("id").convertTo[MessageId]
       val payload     = Base64.getDecoder.decode(o.fields("payload").convertTo[String])
       val attributes  = o.fields("attributes").convertTo[Map[String, String]]
       val publishTime = Instant.parse(o.fields("publishTime").convertTo[String])
-      Message.from(id, payload, attributes, publishTime).fold(e => deserializationError(e.message), identity)
+      // Tolerant: a message journaled before TTL has no expireTime.
+      val expireTime  = o.fields.get("expireTime").map(v => Instant.parse(v.convertTo[String]))
+      Message.from(id, payload, attributes, publishTime, expireTime).fold(e => deserializationError(e.message), identity)
 
   /** Labels default to empty when absent, so events journaled before topics had
     * labels (v0.2.0) still deserialize.
@@ -96,6 +101,8 @@ object JsonFormats extends DefaultJsonProtocol:
         JsObject("type" -> JsString("AckDeadlineExpired"), "ackId" -> ackId.toJson, "attempt" -> attempt.toJson)
       case SubscriptionEvent.MessageDeadLettered(ackId, message, attempt) =>
         JsObject("type" -> JsString("MessageDeadLettered"), "ackId" -> ackId.toJson, "message" -> message.toJson, "attempt" -> attempt.toJson)
+      case SubscriptionEvent.MessageExpired(ackId) =>
+        JsObject("type" -> JsString("MessageExpired"), "ackId" -> ackId.toJson)
     def read(json: JsValue): SubscriptionEvent =
       val o = json.asJsObject
       o.fields("type").convertTo[String] match
@@ -117,6 +124,8 @@ object JsonFormats extends DefaultJsonProtocol:
             o.fields("message").convertTo[Message],
             o.fields("attempt").convertTo[Int]
           )
+        case "MessageExpired" =>
+          SubscriptionEvent.MessageExpired(o.fields("ackId").convertTo[AckId])
         case other => deserializationError(s"unknown SubscriptionEvent type: $other")
 
   // --- Aggregate state (snapshot) formats -----------------------------------

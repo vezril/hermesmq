@@ -10,13 +10,17 @@ import java.time.Instant
   * @param payload     message body (non-empty), stored immutably
   * @param attributes  string metadata, stored immutably
   * @param publishTime when the message was published
+  * @param expireTime  when the message expires (TTL); `None` = never expires
   */
 final case class Message private (
     id: MessageId,
     payload: Vector[Byte],
     attributes: Map[String, String],
-    publishTime: Instant
-)
+    publishTime: Instant,
+    expireTime: Option[Instant]
+):
+  /** True when this message has a TTL that has been reached at `now`. */
+  def expired(now: Instant): Boolean = expireTime.exists(!_.isAfter(now))
 
 object Message:
 
@@ -28,7 +32,8 @@ object Message:
       id: MessageId,
       payload: Array[Byte],
       attributes: collection.Map[String, String],
-      publishTime: Instant
+      publishTime: Instant,
+      expireTime: Option[Instant] = None
   ): Either[ValidationError, Message] =
     if payload.isEmpty then Left(ValidationError("Message payload must not be empty"))
-    else Right(Message(id, payload.toVector, attributes.toMap, publishTime))
+    else Right(Message(id, payload.toVector, attributes.toMap, publishTime, expireTime))

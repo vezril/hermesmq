@@ -1,6 +1,7 @@
 package me.cference.hermesmq.http
 
 import me.cference.hermesmq.auth.TenantScope
+import me.cference.hermesmq.config.TtlConfig
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService, TopicService}
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -17,7 +18,7 @@ import scala.concurrent.duration.*
 import scala.util.{Failure, Success}
 
 /** JSON models for the pub/sub API. */
-final case class PublishRequest(payload: String, attributes: Option[Map[String, String]])
+final case class PublishRequest(payload: String, attributes: Option[Map[String, String]], ttlSeconds: Option[Int] = None)
 final case class PublishResponse(messageId: String)
 final case class CreateSubscriptionRequest(subscriptionId: String, topicId: String)
 final case class PullRequest(max: Option[Int])
@@ -29,7 +30,7 @@ final case class ModifyAckDeadlineRequest(ackIds: List[String], ackDeadlineSecon
 final case class ModifyAckDeadlineResponse(modified: List[String], unknown: List[String])
 
 object PubSubJson extends DefaultJsonProtocol:
-  given RootJsonFormat[PublishRequest]            = jsonFormat2(PublishRequest.apply)
+  given RootJsonFormat[PublishRequest]            = jsonFormat3(PublishRequest.apply)
   given RootJsonFormat[PublishResponse]           = jsonFormat1(PublishResponse.apply)
   given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat2(CreateSubscriptionRequest.apply)
   given RootJsonFormat[PullRequest]               = jsonFormat1(PullRequest.apply)
@@ -47,7 +48,8 @@ object PubSubJson extends DefaultJsonProtocol:
   */
 final class PubSubRoutes(
     topics: TopicService,
-    subscriptions: SubscriptionService
+    subscriptions: SubscriptionService,
+    ttlConfig: TtlConfig = TtlConfig.Default
 )(using ExecutionContext):
   import PubSubJson.given
   import SprayJsonSupport.*
@@ -147,8 +149,9 @@ final class PubSubRoutes(
       case Left(err) => complete(StatusCodes.BadRequest, err.message)
 
   private def buildMessage(req: PublishRequest): Either[ValidationError, Message] =
-    val id = MessageId.from(UUID.randomUUID().toString).toOption.get
-    Message.from(id, req.payload.getBytes(UTF_8), req.attributes.getOrElse(Map.empty), Instant.now())
+    val id  = MessageId.from(UUID.randomUUID().toString).toOption.get
+    val now = Instant.now()
+    Message.from(id, req.payload.getBytes(UTF_8), req.attributes.getOrElse(Map.empty), now, ttlConfig.expireAt(now, req.ttlSeconds.getOrElse(0)))
 
   private def toJson(pm: PulledMessage): PulledMessageJson =
     PulledMessageJson(
@@ -212,6 +215,6 @@ final class PubSubRoutes(
       }
 
 object PubSubRoutes:
-  def apply(topics: TopicService, subscriptions: SubscriptionService)(using
+  def apply(topics: TopicService, subscriptions: SubscriptionService, ttlConfig: TtlConfig = TtlConfig.Default)(using
       ExecutionContext
-  ): PubSubRoutes = new PubSubRoutes(topics, subscriptions)
+  ): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig)

@@ -46,6 +46,7 @@ object SubscriptionStatsFold:
       case SubscriptionEvent.AckDeadlineExpired(_, _)            => sink.redelivered(subscriptionId)
       case SubscriptionEvent.MessageDeadLettered(ackId, _, _)    =>
         sink.deadLettered(subscriptionId); sink.removed(subscriptionId, ackId)
+      case SubscriptionEvent.MessageExpired(ackId)               => sink.removed(subscriptionId, ackId)
       case _ => () // MessageLeased / AckDeadlineModified don't change these stats
 
 /** Read side of the subscription stats read model, serving the admin listing and

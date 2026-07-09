@@ -123,3 +123,46 @@ final class SubscriptionSpec extends AnyFunSuite:
   test("acknowledging an unknown ackId is rejected") {
     assert(Subscription.decide(created, Acknowledge(ackId)) == Left(Rejection.UnknownAckId(ackId)))
   }
+
+  // --- Message TTL --------------------------------------------------------
+
+  private val expireAt = t0.plusSeconds(60)
+  private val ttlMessage = Message
+    .from(MessageId.from("m-ttl").toOption.get, "hi".getBytes, Map.empty, t0, expireTime = Some(expireAt))
+    .toOption
+    .get
+  private def withExpiring: SubscriptionState = Subscription.evolve(created, MessageDelivered(ackId, ttlMessage))
+
+  test("Lease does not return an available message whose TTL has passed") {
+    assert(Subscription.decide(withExpiring, Lease(10, 30.seconds, now = expireAt)) == Right(Nil))
+    assert(Subscription.decide(withExpiring, Lease(10, 30.seconds, now = expireAt.plusSeconds(1))) == Right(Nil))
+  }
+
+  test("Lease still returns a message before its TTL passes") {
+    val events = Subscription.decide(withExpiring, Lease(10, 30.seconds, now = t0))
+    assert(events == Right(List(MessageLeased(List(ackId), t0.plusSeconds(30)))))
+  }
+
+  test("ExpireMessage on an outstanding expired message emits MessageExpired and removes it") {
+    val events = Subscription.decide(withExpiring, ExpireMessage(ackId, now = expireAt))
+    assert(events == Right(List(MessageExpired(ackId))))
+    assert(!evolveAll(events.toOption.get, withExpiring).outstanding.contains(ackId))
+  }
+
+  test("ExpireMessage expires regardless of attempt count or lease state") {
+    // Message leased and previously redelivered, but past its TTL.
+    val base = evolveAll(List(MessageDelivered(ackId, ttlMessage), AckDeadlineExpired(ackId, 3), MessageLeased(List(ackId), expireAt.plusSeconds(30))))
+    assert(Subscription.decide(base, ExpireMessage(ackId, now = expireAt.plusSeconds(1))) == Right(List(MessageExpired(ackId))))
+  }
+
+  test("ExpireMessage before the TTL passes is a no-op") {
+    assert(Subscription.decide(withExpiring, ExpireMessage(ackId, now = t0)) == Right(Nil))
+  }
+
+  test("ExpireMessage on a message with no TTL is a no-op") {
+    assert(Subscription.decide(withAvailable, ExpireMessage(ackId, now = t0.plusSeconds(100_000))) == Right(Nil))
+  }
+
+  test("ExpireMessage on an unknown/gone ackId is a no-op") {
+    assert(Subscription.decide(created, ExpireMessage(ackId, now = expireAt)) == Right(Nil))
+  }

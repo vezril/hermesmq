@@ -88,6 +88,24 @@ final class EventSerializationSpec
       val e = SubscriptionEvent.MessageDeadLettered(ackId, message, 5)
       roundTrip[SubscriptionEvent](e) shouldBe e
     }
+    "round-trip MessageExpired" in {
+      val e = SubscriptionEvent.MessageExpired(ackId)
+      roundTrip[SubscriptionEvent](e) shouldBe e
+    }
+    "round-trip a MessageDelivered whose message carries an expireTime" in {
+      val ttlMsg = Message.from(msgId, "hi".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z"), expireTime = Some(deadline)).toOption.get
+      val e      = SubscriptionEvent.MessageDelivered(ackId, ttlMsg)
+      val out    = roundTrip[SubscriptionEvent](e)
+      out shouldBe e
+      out.asInstanceOf[SubscriptionEvent.MessageDelivered].message.expireTime shouldBe Some(deadline)
+    }
+    "deserialize a message with no expireTime field to no expiry" in {
+      import JsonFormats.given
+      import spray.json.*
+      val json = """{"type":"MessageDelivered","ackId":"ack-1","message":{"id":"m-1","payload":"aGk=","attributes":{},"publishTime":"2026-07-07T00:00:00Z"}}"""
+      val ev   = json.parseJson.convertTo[SubscriptionEvent].asInstanceOf[SubscriptionEvent.MessageDelivered]
+      ev.message.expireTime shouldBe None
+    }
   }
 
   "Java serialization" should {

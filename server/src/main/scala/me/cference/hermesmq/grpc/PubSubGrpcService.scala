@@ -2,7 +2,7 @@ package me.cference.hermesmq.grpc
 
 import com.google.protobuf.ByteString
 import me.cference.hermesmq.auth.TenantScope
-import me.cference.hermesmq.config.StreamConfig
+import me.cference.hermesmq.config.{StreamConfig, TtlConfig}
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.grpc.{Message as ProtoMessage, PulledMessage as ProtoPulledMessage}
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage as DomainPulledMessage, SubscriptionService, TopicService}
@@ -23,7 +23,8 @@ import scala.concurrent.{ExecutionContext, Future}
 final class PubSubGrpcService(
     topics: TopicService,
     subscriptions: SubscriptionService,
-    streamConfig: StreamConfig = StreamConfig.Default
+    streamConfig: StreamConfig = StreamConfig.Default,
+    ttlConfig: TtlConfig = TtlConfig.Default
 )(using ExecutionContext, ActorSystem)
     extends PubSubService:
 
@@ -164,8 +165,9 @@ final class PubSubGrpcService(
     }
 
   private def buildMessage(in: PublishRequest): Either[ValidationError, Message] =
-    val id = MessageId.from(UUID.randomUUID().toString).toOption.get
-    Message.from(id, in.payload.toByteArray, in.attributes, Instant.now())
+    val id  = MessageId.from(UUID.randomUUID().toString).toOption.get
+    val now = Instant.now()
+    Message.from(id, in.payload.toByteArray, in.attributes, now, ttlConfig.expireAt(now, in.ttlSeconds))
 
   private def toProto(pm: DomainPulledMessage): ProtoPulledMessage =
     ProtoPulledMessage(ackId = pm.ackId.value, message = Some(toProtoMessage(pm.message)))
