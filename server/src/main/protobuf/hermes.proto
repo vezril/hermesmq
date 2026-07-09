@@ -69,6 +69,7 @@ service PubSubService {
   rpc CreateSubscription (CreateSubscriptionRequest) returns (CreateSubscriptionResponse) {}
   rpc Pull (PullRequest) returns (PullResponse) {}
   rpc StreamMessages (StreamRequest) returns (stream PulledMessage) {}
+  rpc Consume (stream ConsumeRequest) returns (stream PulledMessage) {}
   rpc Ack (AckRequest) returns (AckResponse) {}
   rpc ModifyAckDeadline (ModifyAckDeadlineRequest) returns (ModifyAckDeadlineResponse) {}
 }
@@ -101,6 +102,22 @@ message PullResponse {
 message StreamRequest {
   string subscription_id = 1;
   int32 max = 2;
+}
+
+// Bidirectional consume: the first request MUST be a ConsumeStart; subsequent
+// requests are ConsumeAcks that acknowledge received messages on the same stream.
+message ConsumeStart {
+  string subscription_id = 1;
+  int32 max = 2;
+}
+message ConsumeAck {
+  repeated string ack_ids = 1;
+}
+message ConsumeRequest {
+  oneof kind {
+    ConsumeStart start = 1;
+    ConsumeAck ack = 2;
+  }
 }
 
 message AckRequest {

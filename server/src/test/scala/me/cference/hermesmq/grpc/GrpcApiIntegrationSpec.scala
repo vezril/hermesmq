@@ -113,4 +113,15 @@ final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWor
       got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
       got.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
     }
+
+    "consume bidirectionally: open with Start, receive messages, ack over the same stream" in {
+      val inbound = org.apache.pekko.stream.scaladsl.Source(
+        List(
+          ConsumeRequest().withStart(ConsumeStart(subscriptionId = "s1", max = 1)),
+          ConsumeRequest().withAck(ConsumeAck(ackIds = Seq("ack-1")))
+        )
+      )
+      val got = Await.result(pubsub.consume(inbound).take(2).runWith(org.apache.pekko.stream.scaladsl.Sink.seq), 10.seconds)
+      got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
+    }
   }
