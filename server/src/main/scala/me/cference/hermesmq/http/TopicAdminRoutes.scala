@@ -93,6 +93,7 @@ final class TopicAdminRoutes(service: TopicService, principal: Principal = Topic
       case Success(CommandReply.Rejected(Rejection.TopicAlreadyExists))   => complete(StatusCodes.Conflict)
       case Success(CommandReply.Rejected(Rejection.TopicNotFound))        => complete(StatusCodes.NotFound)
       case Success(CommandReply.Rejected(_))                              => complete(StatusCodes.Conflict)
+      case Success(CommandReply.Published(_, _))                          => complete(StatusCodes.InternalServerError)
       case Failure(_)                                                     => complete(StatusCodes.ServiceUnavailable)
     }
 

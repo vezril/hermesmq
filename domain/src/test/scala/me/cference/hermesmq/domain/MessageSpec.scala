@@ -53,3 +53,18 @@ final class MessageSpec extends AnyFunSuite:
     assert(msg.expired(expireAt))                // at
     assert(msg.expired(expireAt.plusSeconds(1))) // after
   }
+
+  test("a message has no idempotency key by default") {
+    val msg = Message.from(id, "x".getBytes, Map.empty, now).toOption.get
+    assert(msg.idempotencyKey.isEmpty)
+  }
+
+  test("a message carries a supplied idempotency key") {
+    val msg = Message.from(id, "x".getBytes, Map.empty, now, idempotencyKey = Some("abc")).toOption.get
+    assert(msg.idempotencyKey == Some("abc"))
+  }
+
+  test("an empty-string idempotency key normalises to None") {
+    val msg = Message.from(id, "x".getBytes, Map.empty, now, idempotencyKey = Some("")).toOption.get
+    assert(msg.idempotencyKey.isEmpty)
+  }

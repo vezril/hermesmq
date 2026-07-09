@@ -25,8 +25,12 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
   private def json(body: String) = HttpEntity(ContentTypes.`application/json`, body)
 
   private def topicStub(reply: CommandReply = CommandReply.Accepted): TopicService = new TopicService:
-    def submit(id: TopicId, command: TopicCommand): Future[CommandReply] = Future.successful(reply)
-    def query(id: TopicId): Future[Option[TopicSnapshot]]                = Future.successful(None)
+    // Publish replies Published; a default Accepted becomes Published(id,false),
+    // while an explicit Rejected still flows through.
+    def submit(id: TopicId, command: TopicCommand): Future[CommandReply] = Future.successful((command, reply) match
+      case (TopicCommand.Publish(m), CommandReply.Accepted) => CommandReply.Published(m.id, deduplicated = false)
+      case _                                                => reply)
+    def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
 
   private def subStub(
       submitReply: CommandReply = CommandReply.Accepted,
@@ -45,9 +49,8 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
     @volatile var lastPublished: Option[Message] = None
     def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
       command match
-        case TopicCommand.Publish(m) => lastPublished = Some(m)
-        case _                       => ()
-      Future.successful(CommandReply.Accepted)
+        case TopicCommand.Publish(m) => lastPublished = Some(m); Future.successful(CommandReply.Published(m.id, deduplicated = false))
+        case _                       => Future.successful(CommandReply.Accepted)
     def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
 
   "TTL on publish" should {
@@ -83,8 +86,30 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
     "accept a publish and return 202 with a messageId" in {
       Post("/v1/topics/orders/messages", json("""{"payload":"hello"}""")) ~> routes() ~> check {
         status shouldBe StatusCodes.Accepted
-        responseAs[String].parseJson.asJsObject.fields("messageId").convertTo[String] should not be empty
+        val o = responseAs[String].parseJson.asJsObject
+        o.fields("messageId").convertTo[String] should not be empty
+        o.fields("deduplicated").convertTo[Boolean] shouldBe false
       }
+    }
+
+    "carry the idempotencyKey into the published message" in {
+      val cap = CapturingTopics()
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi","idempotencyKey":"abc"}""")) ~>
+        Route.seal(PubSubRoutes(cap, subStub()).routes) ~> check {
+          status shouldBe StatusCodes.Accepted
+          cap.lastPublished.flatMap(_.idempotencyKey) shouldBe Some("abc")
+        }
+    }
+
+    "report deduplicated=true and the original messageId when the aggregate reports a duplicate" in {
+      val original = MessageId.from("orig-1").toOption.get
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi","idempotencyKey":"abc"}""")) ~>
+        routes(topics = topicStub(CommandReply.Published(original, deduplicated = true))) ~> check {
+          status shouldBe StatusCodes.Accepted
+          val o = responseAs[String].parseJson.asJsObject
+          o.fields("messageId").convertTo[String] shouldBe "orig-1"
+          o.fields("deduplicated").convertTo[Boolean] shouldBe true
+        }
     }
     "return 404 when the topic does not exist" in {
       Post("/v1/topics/ghost/messages", json("""{"payload":"hi"}""")) ~>

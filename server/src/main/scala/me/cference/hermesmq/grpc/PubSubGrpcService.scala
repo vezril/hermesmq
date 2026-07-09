@@ -31,7 +31,12 @@ final class PubSubGrpcService(
   def publish(in: PublishRequest): Future[PublishResponse] =
     (TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from), buildMessage(in)) match
       case (Right(topicId), Right(message)) =>
-        submitTopic(topicId, TopicCommand.Publish(message)).map(_ => PublishResponse(messageId = message.id.value))
+        topics.submit(topicId, TopicCommand.Publish(message)).map {
+          case CommandReply.Published(mid, deduplicated) =>
+            PublishResponse(messageId = mid.value, deduplicated = deduplicated)
+          case CommandReply.Rejected(rejection) => throw GrpcErrors.rejected(rejection)
+          case CommandReply.Accepted            => throw new IllegalStateException("Publish returned Accepted; expected Published")
+        }
       case (Left(err), _) => Future.failed(GrpcErrors.invalid(err))
       case (_, Left(err)) => Future.failed(GrpcErrors.invalid(err))
 
@@ -44,6 +49,7 @@ final class PubSubGrpcService(
         subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid)).map {
           case CommandReply.Accepted            => CreateSubscriptionResponse()
           case CommandReply.Rejected(rejection) => throw GrpcErrors.rejected(rejection)
+          case CommandReply.Published(_, _)     => throw new IllegalStateException("unexpected Published reply for CreateSubscription")
         }
       case _ => Future.failed(GrpcErrors.invalid(ValidationError("invalid subscriptionId or topicId")))
 
@@ -150,24 +156,27 @@ final class PubSubGrpcService(
           case Left(_) => Future.successful((raw, false))
           case Right(a) =>
             subscriptions.submit(sid, command(a)).map {
-              case CommandReply.Accepted    => (raw, true)
-              case CommandReply.Rejected(_) => (raw, false)
+              case CommandReply.Accepted        => (raw, true)
+              case CommandReply.Rejected(_)     => (raw, false)
+              case CommandReply.Published(_, _) => (raw, false)
             }
       }
       .map { results =>
         (results.collect { case (r, true) => r }, results.collect { case (r, false) => r })
       }
 
-  private def submitTopic(id: TopicId, command: TopicCommand): Future[Unit] =
-    topics.submit(id, command).map {
-      case CommandReply.Accepted            => ()
-      case CommandReply.Rejected(rejection) => throw GrpcErrors.rejected(rejection)
-    }
-
   private def buildMessage(in: PublishRequest): Either[ValidationError, Message] =
     val id  = MessageId.from(UUID.randomUUID().toString).toOption.get
     val now = Instant.now()
-    Message.from(id, in.payload.toByteArray, in.attributes, now, ttlConfig.expireAt(now, in.ttlSeconds))
+    // An empty idempotency_key is normalised to None (no dedup) by Message.from.
+    Message.from(
+      id,
+      in.payload.toByteArray,
+      in.attributes,
+      now,
+      ttlConfig.expireAt(now, in.ttlSeconds),
+      idempotencyKey = Some(in.idempotencyKey)
+    )
 
   private def toProto(pm: DomainPulledMessage): ProtoPulledMessage =
     ProtoPulledMessage(ackId = pm.ackId.value, message = Some(toProtoMessage(pm.message)))

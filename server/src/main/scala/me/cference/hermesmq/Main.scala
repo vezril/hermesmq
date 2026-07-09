@@ -3,7 +3,7 @@ package me.cference.hermesmq
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
 import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
-import me.cference.hermesmq.config.{AuthConfig, DbConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig, StreamConfig, TtlConfig}
+import me.cference.hermesmq.config.{AuthConfig, DbConfig, DedupConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig, StreamConfig, TtlConfig}
 import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, ExpiringMessageProjection, JdbcExpiringMessageRepository, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection, TtlSweeper}
 import me.cference.hermesmq.grpc.{GrpcServer, PubSubPowerApi, TopicAdminPowerApi}
 import me.cference.hermesmq.http.{Auth, HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
@@ -41,14 +41,15 @@ object Main:
         authConfig       <- AuthConfig.from(rawConfig)
         streamConfig     <- StreamConfig.from(rawConfig)
         ttlConfig        <- TtlConfig.from(rawConfig)
-      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig)
+        dedupConfig      <- DedupConfig.from(rawConfig)
+      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig)) =>
+      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig)) =>
         val persistenceHealth = PersistenceHealth(dbConfig)
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
@@ -58,7 +59,7 @@ object Main:
 
           // Cluster Sharding: one writer per id across the cluster.
           val sharding = ClusterSharding(ctx.system)
-          TopicSharding.init(sharding, retentionConfig)
+          TopicSharding.init(sharding, retentionConfig, dedupConfig)
           SubscriptionSharding.init(sharding, retentionConfig)
           val topicService        = ShardedTopicService(sharding)
           val subscriptionService = ShardedSubscriptionService(sharding, redeliveryConfig.ackDeadline)

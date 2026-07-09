@@ -44,6 +44,20 @@ final class SnapshotSerializationSpec
       val s = TopicState(Some(topicId), Map.empty, deleted = true)
       roundTrip[TopicState](s) shouldBe s
     }
+    "round-trip a topic state carrying a seen dedup set" in {
+      val s = TopicState(
+        Some(topicId),
+        Map.empty,
+        deleted = false,
+        seen = Map("abc" -> SeenPublish(MessageId.from("m-1").toOption.get, Instant.parse("2026-07-07T00:00:00Z")))
+      )
+      roundTrip[TopicState](s) shouldBe s
+    }
+    "read a legacy topic snapshot (no seen field) as an empty seen set" in {
+      import JsonFormats.given
+      import spray.json.*
+      """{"topicId":"orders","labels":{},"deleted":false}""".parseJson.convertTo[TopicState].seen shouldBe empty
+    }
     "round-trip the empty topic state" in {
       roundTrip[TopicState](Topic.empty) shouldBe Topic.empty
     }

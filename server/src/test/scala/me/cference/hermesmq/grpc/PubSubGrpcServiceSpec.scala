@@ -37,8 +37,12 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       case other                   => fail(s"expected GrpcServiceException, got $other")
 
   private def topics(reply: CommandReply = CommandReply.Accepted): TopicService = new TopicService:
-    def submit(id: TopicId, command: TopicCommand): Future[CommandReply] = Future.successful(reply)
-    def query(id: TopicId): Future[Option[TopicSnapshot]]                = Future.successful(None)
+    // Publish replies Published; a default Accepted becomes Published(id,false),
+    // while an explicit Rejected still flows through.
+    def submit(id: TopicId, command: TopicCommand): Future[CommandReply] = Future.successful((command, reply) match
+      case (TopicCommand.Publish(m), CommandReply.Accepted) => CommandReply.Published(m.id, deduplicated = false)
+      case _                                                => reply)
+    def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
 
   private def subs(
       submitReply: CommandReply = CommandReply.Accepted,
@@ -67,8 +71,9 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       @volatile var published: Option[Message] = None
       val capturing = new TopicService:
         def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
-          command match { case TopicCommand.Publish(m) => published = Some(m); case _ => () }
-          Future.successful(CommandReply.Accepted)
+          command match
+            case TopicCommand.Publish(m) => published = Some(m); Future.successful(CommandReply.Published(m.id, deduplicated = false))
+            case _                       => Future.successful(CommandReply.Accepted)
         def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
       await(PubSubGrpcService(capturing, subs()).publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), ttlSeconds = 60)))
       published.flatMap(_.expireTime).isDefined shouldBe true
@@ -124,6 +129,31 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
     "publish a message and return a non-empty messageId" in {
       val resp = await(service().publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"))))
       resp.messageId should not be empty
+      resp.deduplicated shouldBe false
+    }
+
+    "forward the idempotency_key into the published message" in {
+      @volatile var published: Option[Message] = None
+      val capturing = new TopicService:
+        def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+          command match
+            case TopicCommand.Publish(m) => published = Some(m); Future.successful(CommandReply.Published(m.id, deduplicated = false))
+            case _                       => Future.successful(CommandReply.Accepted)
+        def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
+      await(PubSubGrpcService(capturing, subs()).publish(
+        PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), idempotencyKey = "abc")
+      ))
+      published.flatMap(_.idempotencyKey) shouldBe Some("abc")
+    }
+
+    "return deduplicated=true and the original messageId when the aggregate reports a duplicate" in {
+      val original = MessageId.from("orig-1").toOption.get
+      val svc      = service(t = topics(CommandReply.Published(original, deduplicated = true)))
+      val resp = await(svc.publish(
+        PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), idempotencyKey = "abc")
+      ))
+      resp.messageId shouldBe "orig-1"
+      resp.deduplicated shouldBe true
     }
 
     "map an empty payload to INVALID_ARGUMENT" in {

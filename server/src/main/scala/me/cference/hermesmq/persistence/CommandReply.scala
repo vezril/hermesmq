@@ -1,6 +1,6 @@
 package me.cference.hermesmq.persistence
 
-import me.cference.hermesmq.domain.{Message, Rejection}
+import me.cference.hermesmq.domain.{Message, MessageId, Rejection}
 import org.apache.pekko.actor.typed.ActorRef
 import me.cference.hermesmq.domain.{AckId, SubscriptionCommand, TopicCommand, TopicId}
 
@@ -10,10 +10,13 @@ import scala.concurrent.duration.FiniteDuration
 /** Reply sent by a persistent entity once a command has been handled.
   * `Accepted` is sent only after the resulting event is durably journaled;
   * `Rejected` carries the domain [[Rejection]] and no event is persisted.
+  * `Published` is the publish-specific outcome: the effective message id
+  * (the original on a dedup hit) and whether the publish was a duplicate.
   */
 enum CommandReply:
   case Accepted
   case Rejected(rejection: Rejection)
+  case Published(messageId: MessageId, deduplicated: Boolean)
 
 /** A read-only view of an active topic, returned by a query. */
 final case class TopicSnapshot(topicId: TopicId, labels: Map[String, String])
