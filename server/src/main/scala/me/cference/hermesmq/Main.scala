@@ -8,7 +8,7 @@ import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, Del
 import me.cference.hermesmq.grpc.{GrpcServer, PubSubPowerApi, TopicAdminPowerApi}
 import me.cference.hermesmq.http.{Auth, HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
 import me.cference.hermesmq.observability.{JdbcSubscriptionStatsRepository, JdbcTopicStatsRepository, ObservabilityRoutes, SubscriptionStatsProjection, TopicStatsProjection}
-import me.cference.hermesmq.persistence.PersistenceHealth
+import me.cference.hermesmq.persistence.{PersistenceHealth, SchemaMigrator}
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.cluster.sharding.typed.scaladsl.{ClusterSharding, ShardedDaemonProcess}
@@ -50,6 +50,14 @@ object Main:
         sys.exit(1)
 
       case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig)) =>
+        // Apply the bundled schema before anything touches the database, so
+        // projections and aggregates never race a missing table. Idempotent, so
+        // a no-op over an already-provisioned DB. Fail fast, like a config error.
+        if dbConfig.migrateOnStart then
+          SchemaMigrator.migrate(dbConfig) match
+            case Left(err)  => System.err.println(s"Schema migration error: ${err.message}"); sys.exit(1)
+            case Right(())  => ()
+
         val persistenceHealth = PersistenceHealth(dbConfig)
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 

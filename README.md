@@ -43,6 +43,7 @@ clustering and horizontal scaling are non-goals.
 | Bidirectional consume (stream messages + ack over one gRPC call) | ✅ Done |
 | Message TTL / expiry (drop-on-expiry, sweeper-purged) | ✅ Done |
 | Idempotent publish (producer key dedup within a window) | ✅ Done |
+| Schema self-migration on boot (idempotent, opt-out) | ✅ Done |
 
 ## Prerequisites
 
@@ -501,16 +502,42 @@ HERMESMQ_DB_PASSWORD=hermes sbt run   # service connects to it
 ```
 
 The schema DDL lives at
-[`server/src/main/resources/schema/postgres.sql`](server/src/main/resources/schema/postgres.sql);
-apply it to any fresh database before first use. If the database is unreachable
-or the schema is missing, persistence fails loudly (the operation is never
+[`server/src/main/resources/schema/postgres.sql`](server/src/main/resources/schema/postgres.sql).
+If the database is unreachable, persistence fails loudly (the operation is never
 silently accepted-and-lost) and `GET /health/ready` reports `503`.
 
-Unit tests use an in-memory journal and need **no database**. The one PostgreSQL
-integration test is excluded from the default run; run it (with Docker) via:
+### Schema self-migration
+
+On startup — before it binds any endpoint — the service **applies the bundled
+schema itself** against `HERMESMQ_DB_*`, so a fresh PostgreSQL (k3s, compose, CI,
+or a bare instance) needs no external init step. The schema is idempotent
+(`IF NOT EXISTS` throughout), so applying it over an already-provisioned database
+is a harmless no-op. Startup waits up to `HERMESMQ_DB_MIGRATE_MAX_WAIT` for the
+database to become reachable (absorbing k8s start-ordering) and then fails fast
+with a clear error if it does not — the schema is guaranteed to exist before any
+projection runs or readiness reports ready.
+
+| Variable                    | Default | Description                                                        |
+|-----------------------------|---------|--------------------------------------------------------------------|
+| `HERMESMQ_DB_MIGRATE_ON_START` | `true`  | Apply `schema/postgres.sql` on boot. `false` = rely on externally-managed migrations. |
+| `HERMESMQ_DB_MIGRATE_MAX_WAIT` | `30s`   | How long to wait for the database before boot-time migration gives up. |
+
+This is idempotent *apply-the-current-schema*, not a versioned migration
+framework — additive (`IF NOT EXISTS`) schema changes apply cleanly; destructive
+evolution would need a dedicated migration tool. Operators who provision the
+schema out-of-band (initdb, Flyway, a privileged DBA role) set
+`HERMESMQ_DB_MIGRATE_ON_START=false`. On Kubernetes this means the Postgres
+chart needs **no schema ConfigMap** — the service provisions itself on first boot.
+The docker-compose `docker-entrypoint-initdb.d` mount below is now redundant (the
+service would self-migrate anyway) but is left in place as harmless
+belt-and-suspenders.
+
+Unit tests use an in-memory journal and need **no database**. The PostgreSQL
+integration tests (durable persistence, and schema self-migration against a fresh
+database) are excluded from the default run; run them (with Docker) via:
 
 ```bash
-sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec"
+sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec *SchemaMigrationIntegrationSpec"
 ```
 
 ## Clustering
@@ -607,7 +634,9 @@ services:
       POSTGRES_USER: hermes
       POSTGRES_PASSWORD: change-me
     volumes:
-      # applies the journal/snapshot schema on first start
+      # Applies the schema on first start. Redundant now that the service
+      # self-migrates on boot (HERMESMQ_DB_MIGRATE_ON_START, default true); kept
+      # as harmless belt-and-suspenders.
       - ./server/src/main/resources/schema/postgres.sql:/docker-entrypoint-initdb.d/10-hermesmq.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hermes -d hermesmq"]
