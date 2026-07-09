@@ -40,6 +40,7 @@ clustering and horizontal scaling are non-goals.
 | Observability: read models, admin listings & Prometheus metrics | ✅ Done |
 | Authentication & multi-tenant isolation (REST + gRPC) | ✅ Done |
 | Streaming consume (server-streaming gRPC) | ✅ Done |
+| Bidirectional consume (stream messages + ack over one gRPC call) | ✅ Done |
 
 ## Prerequisites
 
@@ -284,7 +285,7 @@ The contract lives in [`server/src/main/protobuf/hermes.proto`](server/src/main/
 | Service | RPCs |
 |---------|------|
 | `TopicAdminService` | `CreateTopic`, `GetTopic`, `UpdateTopic`, `DeleteTopic` |
-| `PubSubService`     | `Publish`, `CreateSubscription`, `Pull`, `StreamMessages`, `Ack`, `ModifyAckDeadline` |
+| `PubSubService`     | `Publish`, `CreateSubscription`, `Pull`, `StreamMessages`, `Consume`, `Ack`, `ModifyAckDeadline` |
 
 `Pull` leases messages exactly as REST pull does; `Ack`/`ModifyAckDeadline` accept a
 batch and report which ids were applied vs unknown. Domain rejections map to gRPC
@@ -326,8 +327,23 @@ pubsub.streamMessages(StreamRequest(subscriptionId = "s1"))
   .runForeach { m => process(m); /* then: pubsub.ack(AckRequest("s1", Seq(m.ackId))) */ }
 ```
 
-> **Future:** bidirectional streaming (acking over the same stream) is a natural next
-> step; today ack stays on the unary `Ack`.
+### Bidirectional consume
+
+`Consume(stream ConsumeRequest) returns (stream PulledMessage)` receives messages **and**
+acknowledges them over one long-lived call. The client's **first** request must be a
+`ConsumeStart{subscription_id, max}`; subsequent requests are `ConsumeAck{ack_ids}`. The
+server streams leased messages back (same demand-driven backpressure as `StreamMessages`)
+and applies acks as they arrive — acks are processed **independently of outbound demand**,
+so a client that reads slowly but keeps acking is never stalled. Acks are fire-and-forget
+(no per-ack response; use unary `Ack` if you need confirmation); a non-`ConsumeStart` first
+message fails `INVALID_ARGUMENT`, an unknown subscription `NOT_FOUND`, and cancelling the
+call stops both directions (unacked messages redeliver after their deadline).
+
+```scala
+val inbound = Source.single(ConsumeRequest().withStart(ConsumeStart(subscriptionId = "s1")))
+  .concat(acksAsTheyAreProcessed) // ConsumeRequest().withAck(ConsumeAck(Seq(ackId)))
+pubsub.consume(inbound).runForeach(process)
+```
 
 ## Observability
 
