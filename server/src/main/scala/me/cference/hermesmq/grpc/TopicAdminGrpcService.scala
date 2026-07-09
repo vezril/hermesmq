@@ -48,6 +48,7 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
     topics.submit(id, command).map {
       case CommandReply.Accepted            => ()
       case CommandReply.Rejected(rejection) => throw GrpcErrors.rejected(rejection)
+      case CommandReply.Published(_, _)     => throw new IllegalStateException("unexpected Published reply for topic admin command")
     }
 
   private def toProto(snap: TopicSnapshot): Topic =

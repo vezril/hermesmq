@@ -18,8 +18,13 @@ import scala.concurrent.duration.*
 import scala.util.{Failure, Success}
 
 /** JSON models for the pub/sub API. */
-final case class PublishRequest(payload: String, attributes: Option[Map[String, String]], ttlSeconds: Option[Int] = None)
-final case class PublishResponse(messageId: String)
+final case class PublishRequest(
+    payload: String,
+    attributes: Option[Map[String, String]],
+    ttlSeconds: Option[Int] = None,
+    idempotencyKey: Option[String] = None
+)
+final case class PublishResponse(messageId: String, deduplicated: Boolean = false)
 final case class CreateSubscriptionRequest(subscriptionId: String, topicId: String)
 final case class PullRequest(max: Option[Int])
 final case class PulledMessageJson(ackId: String, payload: String, attributes: Map[String, String], publishTime: String)
@@ -30,8 +35,8 @@ final case class ModifyAckDeadlineRequest(ackIds: List[String], ackDeadlineSecon
 final case class ModifyAckDeadlineResponse(modified: List[String], unknown: List[String])
 
 object PubSubJson extends DefaultJsonProtocol:
-  given RootJsonFormat[PublishRequest]            = jsonFormat3(PublishRequest.apply)
-  given RootJsonFormat[PublishResponse]           = jsonFormat1(PublishResponse.apply)
+  given RootJsonFormat[PublishRequest]            = jsonFormat4(PublishRequest.apply)
+  given RootJsonFormat[PublishResponse]           = jsonFormat2(PublishResponse.apply)
   given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat2(CreateSubscriptionRequest.apply)
   given RootJsonFormat[PullRequest]               = jsonFormat1(PullRequest.apply)
   given RootJsonFormat[PulledMessageJson]         = jsonFormat4(PulledMessageJson.apply)
@@ -69,10 +74,11 @@ final class PubSubRoutes(
                   case Left(err) => complete(StatusCodes.BadRequest, err.message)
                   case Right(message) =>
                     onComplete(topics.submit(topicId, TopicCommand.Publish(message))) {
-                      case Success(CommandReply.Accepted) =>
-                        complete((StatusCodes.Accepted, PublishResponse(message.id.value)))
+                      case Success(CommandReply.Published(mid, deduplicated)) =>
+                        complete((StatusCodes.Accepted, PublishResponse(mid.value, deduplicated)))
                       case Success(CommandReply.Rejected(Rejection.TopicNotFound)) => complete(StatusCodes.NotFound)
                       case Success(CommandReply.Rejected(_))                       => complete(StatusCodes.Conflict)
+                      case Success(CommandReply.Accepted)                          => complete(StatusCodes.InternalServerError)
                       case Failure(_)                                              => complete(StatusCodes.ServiceUnavailable)
                     }
           }
@@ -90,8 +96,9 @@ final class PubSubRoutes(
                 ) match
                   case (Right(sid), Right(tid)) =>
                     onComplete(subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid))) {
-                      case Success(CommandReply.Accepted)    => complete(StatusCodes.Created)
-                      case Success(CommandReply.Rejected(_)) => complete(StatusCodes.Conflict)
+                      case Success(CommandReply.Accepted)       => complete(StatusCodes.Created)
+                      case Success(CommandReply.Rejected(_))    => complete(StatusCodes.Conflict)
+                      case Success(CommandReply.Published(_, _)) => complete(StatusCodes.InternalServerError)
                       case Failure(_)                        => complete(StatusCodes.ServiceUnavailable)
                     }
                   case _ => complete(StatusCodes.BadRequest, "invalid subscriptionId or topicId")
@@ -151,7 +158,15 @@ final class PubSubRoutes(
   private def buildMessage(req: PublishRequest): Either[ValidationError, Message] =
     val id  = MessageId.from(UUID.randomUUID().toString).toOption.get
     val now = Instant.now()
-    Message.from(id, req.payload.getBytes(UTF_8), req.attributes.getOrElse(Map.empty), now, ttlConfig.expireAt(now, req.ttlSeconds.getOrElse(0)))
+    // An empty idempotency key is normalised to None (no dedup) by Message.from.
+    Message.from(
+      id,
+      req.payload.getBytes(UTF_8),
+      req.attributes.getOrElse(Map.empty),
+      now,
+      ttlConfig.expireAt(now, req.ttlSeconds.getOrElse(0)),
+      idempotencyKey = req.idempotencyKey
+    )
 
   private def toJson(pm: PulledMessage): PulledMessageJson =
     PulledMessageJson(
@@ -181,8 +196,9 @@ final class PubSubRoutes(
               case Left(_) => Future.successful((raw, false))
               case Right(a) =>
                 subscriptions.submit(sid, SubscriptionCommand.ModifyAckDeadline(a, deadline, now)).map {
-                  case CommandReply.Accepted    => (raw, true)
-                  case CommandReply.Rejected(_) => (raw, false)
+                  case CommandReply.Accepted        => (raw, true)
+                  case CommandReply.Rejected(_)     => (raw, false)
+                  case CommandReply.Published(_, _) => (raw, false)
                 }
           }
           .map { results =>
@@ -203,8 +219,9 @@ final class PubSubRoutes(
           case Left(_) => Future.successful((raw, false))
           case Right(a) =>
             subscriptions.submit(sid, SubscriptionCommand.Acknowledge(a)).map {
-              case CommandReply.Accepted    => (raw, true)
-              case CommandReply.Rejected(_) => (raw, false)
+              case CommandReply.Accepted        => (raw, true)
+              case CommandReply.Rejected(_)     => (raw, false)
+              case CommandReply.Published(_, _) => (raw, false)
             }
       }
       .map { results =>

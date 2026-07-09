@@ -1,7 +1,7 @@
 package me.cference.hermesmq.persistence
 
-import me.cference.hermesmq.config.RetentionConfig
-import me.cference.hermesmq.domain.{Topic, TopicEvent, TopicId, TopicState}
+import me.cference.hermesmq.config.{DedupConfig, RetentionConfig}
+import me.cference.hermesmq.domain.{Topic, TopicCommand, TopicEvent, TopicId, TopicState}
 import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.persistence.typed.PersistenceId
 import org.apache.pekko.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, RetentionCriteria}
@@ -37,17 +37,33 @@ object TopicEntity:
   def persistenceId(topicId: TopicId): PersistenceId =
     PersistenceId.ofUniqueId(s"Topic|${topicId.value}")
 
-  def apply(topicId: TopicId, retention: RetentionConfig = RetentionConfig.Default): Behavior[TopicEntityCommand] =
+  def apply(
+      topicId: TopicId,
+      retention: RetentionConfig = RetentionConfig.Default,
+      dedup: DedupConfig = DedupConfig.Default
+  ): Behavior[TopicEntityCommand] =
     EventSourcedBehavior[TopicEntityCommand, TopicEvent, TopicState](
       persistenceId = persistenceId(topicId),
       emptyState = Topic.empty,
       commandHandler = (state, command) =>
         command match
           case TopicEntityCommand.Submit(cmd, replyTo) =>
-            EntityEffects.persistOrReject(Topic.decide(state, cmd), replyTo)
+            cmd match
+              // Publish replies with the effective message id + dedup flag, taken
+              // from the aggregate decision so a retry echoes the original id.
+              case TopicCommand.Publish(message) =>
+                Topic.decide(state, cmd, dedup.window) match
+                  case Left(rejection) => Effect.reply(replyTo)(CommandReply.Rejected(rejection))
+                  case Right(events) =>
+                    val reply = Topic.duplicateOf(state, message, dedup.window) match
+                      case Some(originalId) => CommandReply.Published(originalId, deduplicated = true)
+                      case None             => CommandReply.Published(message.id, deduplicated = false)
+                    Effect.persist(events).thenReply(replyTo)(_ => reply)
+              case other =>
+                EntityEffects.persistOrReject(Topic.decide(state, other, dedup.window), replyTo)
           case TopicEntityCommand.Query(replyTo) =>
             Effect.none.thenReply(replyTo)(_ => snapshot(state)),
-      eventHandler = Topic.evolve
+      eventHandler = (state, event) => Topic.evolve(state, event, dedup.window)
     ).withTagger(tagsFor).withRetention(
       RetentionCriteria
         .snapshotEvery(numberOfEvents = retention.snapshotEveryEvents, keepNSnapshots = retention.keepNSnapshots)

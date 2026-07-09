@@ -1,7 +1,7 @@
 package me.cference.hermesmq.persistence
 
 import com.typesafe.config.ConfigFactory
-import me.cference.hermesmq.config.RetentionConfig
+import me.cference.hermesmq.config.{DedupConfig, RetentionConfig}
 import me.cference.hermesmq.domain.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.scalatest.BeforeAndAfterAll
@@ -75,6 +75,31 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       val second = testKit.spawn(SubscriptionEntity(subId))
       second ! SubscriptionEntityCommand.Submit(SubscriptionCommand.CreateSubscription(subId, topicId), probe.ref)
       probe.expectMessage(20.seconds,CommandReply.Rejected(Rejection.SubscriptionAlreadyExists))
+    }
+
+    "deduplicate a repeated idempotency key across a topic-entity restart within the window" taggedAs PostgresIT in {
+      assume(dockerAvailable, "Docker is not available")
+
+      val topicId = TopicId.from("dedup-it").toOption.get
+      val probe   = testKit.createTestProbe[CommandReply]()
+      val t0      = Instant.parse("2026-07-07T00:00:00Z")
+      def keyed(id: String, at: Instant) =
+        Message.from(MessageId.from(id).toOption.get, "x".getBytes, Map.empty, at, idempotencyKey = Some("abc")).toOption.get
+
+      // First incarnation: create the topic and publish a keyed message.
+      val first    = testKit.spawn(TopicEntity(topicId, dedup = DedupConfig(1.hour)))
+      first ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(topicId), probe.ref)
+      probe.expectMessage(20.seconds, CommandReply.Accepted)
+      val original = keyed("m-1", t0)
+      first ! TopicEntityCommand.Submit(TopicCommand.Publish(original), probe.ref)
+      probe.expectMessage(20.seconds, CommandReply.Published(original.id, deduplicated = false))
+      testKit.stop(first)
+
+      // Second incarnation rebuilds the seen-set from the journal, so a retry with
+      // the same key within the window is deduplicated to the original id.
+      val second = testKit.spawn(TopicEntity(topicId, dedup = DedupConfig(1.hour)))
+      second ! TopicEntityCommand.Submit(TopicCommand.Publish(keyed("m-2", t0.plusSeconds(60))), probe.ref)
+      probe.expectMessage(20.seconds, CommandReply.Published(original.id, deduplicated = true))
     }
 
     "lease, expire, redeliver, and finally dead-letter across attempts, surviving restarts" taggedAs PostgresIT in {

@@ -48,17 +48,23 @@ object JsonFormats extends DefaultJsonProtocol:
         "attributes"  -> m.attributes.toJson,
         "publishTime" -> JsString(m.publishTime.toString)
       )
-      // Omit expireTime when absent so messages without a TTL serialize as before.
-      JsObject(m.expireTime.fold(base)(t => base + ("expireTime" -> JsString(t.toString))))
+      // Omit expireTime / idempotencyKey when absent so messages without a TTL or
+      // dedup key serialize exactly as before.
+      val withTtl = m.expireTime.fold(base)(t => base + ("expireTime" -> JsString(t.toString)))
+      val withKey = m.idempotencyKey.fold(withTtl)(k => withTtl + ("idempotencyKey" -> JsString(k)))
+      JsObject(withKey)
     def read(json: JsValue): Message =
       val o           = json.asJsObject
       val id          = o.fields("id").convertTo[MessageId]
       val payload     = Base64.getDecoder.decode(o.fields("payload").convertTo[String])
       val attributes  = o.fields("attributes").convertTo[Map[String, String]]
       val publishTime = Instant.parse(o.fields("publishTime").convertTo[String])
-      // Tolerant: a message journaled before TTL has no expireTime.
-      val expireTime  = o.fields.get("expireTime").map(v => Instant.parse(v.convertTo[String]))
-      Message.from(id, payload, attributes, publishTime, expireTime).fold(e => deserializationError(e.message), identity)
+      // Tolerant: a message journaled before TTL / dedup has neither field.
+      val expireTime     = o.fields.get("expireTime").map(v => Instant.parse(v.convertTo[String]))
+      val idempotencyKey = o.fields.get("idempotencyKey").map(_.convertTo[String])
+      Message
+        .from(id, payload, attributes, publishTime, expireTime, idempotencyKey)
+        .fold(e => deserializationError(e.message), identity)
 
   /** Labels default to empty when absent, so events journaled before topics had
     * labels (v0.2.0) still deserialize.
@@ -154,15 +160,26 @@ object JsonFormats extends DefaultJsonProtocol:
         o.fields.getOrElse("attempts", JsNumber(0)).convertTo[Int]
       )
 
+  given RootJsonFormat[SeenPublish] with
+    def write(sp: SeenPublish): JsValue =
+      JsObject("messageId" -> sp.messageId.toJson, "publishTime" -> JsString(sp.publishTime.toString))
+    def read(json: JsValue): SeenPublish =
+      val o = json.asJsObject
+      SeenPublish(o.fields("messageId").convertTo[MessageId], Instant.parse(o.fields("publishTime").convertTo[String]))
+
   given RootJsonFormat[TopicState] with
     def write(s: TopicState): JsValue =
-      JsObject("topicId" -> s.topicId.toJson, "labels" -> s.labels.toJson, "deleted" -> JsBoolean(s.deleted))
+      val base = Map("topicId" -> s.topicId.toJson, "labels" -> s.labels.toJson, "deleted" -> JsBoolean(s.deleted))
+      // Omit `seen` when empty so snapshots with dedup off serialize as before.
+      JsObject(if s.seen.isEmpty then base else base + ("seen" -> s.seen.toJson))
     def read(json: JsValue): TopicState =
       val o = json.asJsObject
       TopicState(
         o.fields.getOrElse("topicId", JsNull).convertTo[Option[TopicId]],
         o.fields.getOrElse("labels", JsObject()).convertTo[Map[String, String]],
-        o.fields.getOrElse("deleted", JsBoolean(false)).convertTo[Boolean]
+        o.fields.getOrElse("deleted", JsBoolean(false)).convertTo[Boolean],
+        // Tolerant: a snapshot written before dedup has no seen-set.
+        o.fields.get("seen").map(_.convertTo[Map[String, SeenPublish]]).getOrElse(Map.empty)
       )
 
   given RootJsonFormat[SubscriptionState] with

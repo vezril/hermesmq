@@ -60,6 +60,21 @@ final class EventSerializationSpec
     "round-trip MessagePublished" in {
       roundTrip[TopicEvent](TopicEvent.MessagePublished(message)) shouldBe TopicEvent.MessagePublished(message)
     }
+    "round-trip MessagePublished carrying an idempotency key" in {
+      val keyed = Message
+        .from(msgId, "hi".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z"), idempotencyKey = Some("abc"))
+        .toOption
+        .get
+      roundTrip[TopicEvent](TopicEvent.MessagePublished(keyed)) shouldBe TopicEvent.MessagePublished(keyed)
+    }
+    "omit idempotencyKey when absent and read a legacy message (no key) as None" in {
+      import JsonFormats.given
+      import spray.json.*
+      message.toJson.asJsObject.fields.contains("idempotencyKey") shouldBe false
+      """{"id":"m-1","payload":"aGk=","attributes":{},"publishTime":"2026-07-07T00:00:00Z"}""".parseJson
+        .convertTo[Message]
+        .idempotencyKey shouldBe None
+    }
     "round-trip SubscriptionCreated" in {
       roundTrip[SubscriptionEvent](SubscriptionEvent.SubscriptionCreated(subId, topicId)) shouldBe
         SubscriptionEvent.SubscriptionCreated(subId, topicId)
