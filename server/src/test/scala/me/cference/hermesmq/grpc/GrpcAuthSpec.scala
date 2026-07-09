@@ -75,4 +75,9 @@ final class GrpcAuthSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike 
       statusOfFailure(pubApi.streamMessages(StreamRequest(subscriptionId = "s1", max = 10), noAuth).runWith(org.apache.pekko.stream.scaladsl.Sink.ignore)) shouldBe
         Status.Code.UNAUTHENTICATED
     }
+
+    "reject an unauthenticated consume with UNAUTHENTICATED" in {
+      val in = org.apache.pekko.stream.scaladsl.Source.single(ConsumeRequest().withStart(ConsumeStart(subscriptionId = "s1", max = 1)))
+      statusOfFailure(pubApi.consume(in, noAuth).runWith(org.apache.pekko.stream.scaladsl.Sink.ignore)) shouldBe Status.Code.UNAUTHENTICATED
+    }
   }

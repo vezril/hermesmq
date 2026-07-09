@@ -6,15 +6,19 @@ import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.time.Instant
+import java.util.concurrent.ConcurrentLinkedQueue
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 
 /** Tests the pub/sub gRPC handler against stub services (no socket). */
-final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matchers:
+final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matchers with Eventually:
 
   private given org.apache.pekko.actor.ActorSystem = system.classicSystem
   private given scala.concurrent.ExecutionContext  = system.executionContext
@@ -44,6 +48,46 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
     def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]]         = Future.successful(pullReply)
 
   private def service(t: TopicService = topics(), s: SubscriptionService = subs()) = PubSubGrpcService(t, s)
+
+  /** Records acknowledged ids; pull returns a fixed reply. */
+  private final class CapturingSubs(pullReply: Option[List[PulledMessage]]) extends SubscriptionService:
+    val acked = new ConcurrentLinkedQueue[String]()
+    def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
+      command match
+        case SubscriptionCommand.Acknowledge(a) => acked.add(a.value)
+        case _                                  => ()
+      Future.successful(CommandReply.Accepted)
+    def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(pullReply)
+
+  private def start(sub: String, max: Int) = ConsumeRequest().withStart(ConsumeStart(subscriptionId = sub, max = max))
+  private def ackReq(ids: String*)          = ConsumeRequest().withAck(ConsumeAck(ackIds = ids))
+
+  "PubSubGrpcService.consume" should {
+    "open on ConsumeStart, stream leased messages, and apply inbound acks" in {
+      val subsvc = CapturingSubs(Some(List(PulledMessage(ackId, message))))
+      val in     = Source(List(start("s1", 1), ackReq("ack-1")))
+      val got    = Await.result(PubSubGrpcService(topics(), subsvc).consume(in).take(2).runWith(Sink.seq), 3.seconds)
+      got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
+      eventually(timeout(3.seconds))(subsvc.acked.asScala should contain("ack-1"))
+    }
+
+    "not fail the stream on an unknown ackId" in {
+      val subsvc = CapturingSubs(Some(List(PulledMessage(ackId, message))))
+      val in     = Source(List(start("s1", 1), ackReq("nope")))
+      // Stream still yields messages despite the unknown ack.
+      Await.result(PubSubGrpcService(topics(), subsvc).consume(in).take(1).runWith(Sink.seq), 3.seconds) should not be empty
+    }
+
+    "fail INVALID_ARGUMENT when the first message is not a ConsumeStart" in {
+      val in = Source.single(ackReq("ack-1"))
+      statusOfFailure(service().consume(in).runWith(Sink.ignore)) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "fail NOT_FOUND for an unknown subscription" in {
+      val svc = service(s = subs(pullReply = None))
+      statusOfFailure(svc.consume(Source.single(start("ghost", 1))).runWith(Sink.ignore)) shouldBe Status.Code.NOT_FOUND
+    }
+  }
 
   "PubSubGrpcService.streamMessages" should {
     "stream the subscription's leased messages" in {

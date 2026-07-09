@@ -66,6 +66,11 @@ final class PubSubPowerApi(
       case None    => Source.failed(GrpcErrors.unauthenticated)
       case Some(p) => scoped(p).streamMessages(in)
 
+  def consume(in: Source[ConsumeRequest, NotUsed], metadata: Metadata): Source[PulledMessage, NotUsed] =
+    GrpcAuth.principal(metadata, authenticator, config) match
+      case None    => Source.failed(GrpcErrors.unauthenticated)
+      case Some(p) => scoped(p).consume(in)
+
   private def scoped(p: me.cference.hermesmq.auth.Principal): PubSubGrpcService =
     new PubSubGrpcService(
       new TenantScopedTopicService(baseTopics, scope, p.tenant),

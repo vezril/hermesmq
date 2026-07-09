@@ -8,7 +8,7 @@ import me.cference.hermesmq.grpc.{Message as ProtoMessage, PulledMessage as Prot
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage as DomainPulledMessage, SubscriptionService, TopicService}
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.ActorSystem
-import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 
 import java.time.Instant
 import java.util.UUID
@@ -67,6 +67,41 @@ final class PubSubGrpcService(
             MessageStream.leased[DomainPulledMessage](_ => subscriptions.pull(sid, batch), batch, streamConfig.pollInterval).map(toProto)
         }
         Source.futureSource(futureSource).mapMaterializedValue(_ => NotUsed)
+
+  def consume(in: Source[ConsumeRequest, NotUsed]): Source[ProtoPulledMessage, NotUsed] =
+    in.prefixAndTail(1).flatMapConcat {
+      case (Seq(first), tail) =>
+        first.kind.start match
+          case None => Source.failed(GrpcErrors.invalid(ValidationError("first Consume message must be a ConsumeStart")))
+          case Some(start) =>
+            TenantScope.validateExternalId(start.subscriptionId).flatMap(SubscriptionId.from) match
+              case Left(err) => Source.failed(GrpcErrors.invalid(err))
+              case Right(sid) =>
+                val batch = if start.max > 0 then start.max else streamConfig.batchSize
+                val futureSource = subscriptions.pull(sid, 0).map {
+                  case None => Source.failed[ProtoPulledMessage](GrpcErrors.rejected(Rejection.SubscriptionNotFound))
+                  case Some(_) =>
+                    // Drain inbound acks on an INDEPENDENT stream so acknowledgement is
+                    // not stalled by slow outbound demand; the client cancelling the call
+                    // cancels this inbound and stops it.
+                    tail.mapConcat(_.kind.ack.toList).mapAsync(PubSubGrpcService.AckParallelism)(a => ackAll(sid, a.ackIds)).runWith(Sink.ignore)
+                    MessageStream.leased[DomainPulledMessage](_ => subscriptions.pull(sid, batch), batch, streamConfig.pollInterval).map(toProto)
+                }
+                Source.futureSource(futureSource)
+      case _ => Source.empty // client opened the stream but sent nothing
+    }
+
+  /** Acknowledge every id (best-effort): malformed/unknown ids are non-fatal so a
+    * bad ack never breaks the consume stream.
+    */
+  private def ackAll(sid: SubscriptionId, ackIds: Seq[String]): Future[Unit] =
+    Future
+      .traverse(ackIds) { raw =>
+        AckId.from(raw) match
+          case Left(_)  => Future.unit
+          case Right(a) => subscriptions.submit(sid, SubscriptionCommand.Acknowledge(a)).map(_ => ()).recover { case _ => () }
+      }
+      .map(_ => ())
 
   def ack(in: AckRequest): Future[AckResponse] =
     withExistingSub(in.subscriptionId) { sid =>
@@ -142,3 +177,7 @@ final class PubSubGrpcService(
       attributes = m.attributes,
       publishTime = m.publishTime.toString
     )
+
+object PubSubGrpcService:
+  /** Bounded concurrency for applying inbound acks on a consume stream. */
+  private val AckParallelism = 8
