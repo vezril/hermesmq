@@ -36,7 +36,10 @@ final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWor
   private val topicSvc: TopicService = new TopicService:
     def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
       if id.value == "dup" then Future.successful(CommandReply.Rejected(Rejection.TopicAlreadyExists))
-      else Future.successful(CommandReply.Accepted)
+      else
+        command match
+          case TopicCommand.Publish(m) => Future.successful(CommandReply.Published(m.id, deduplicated = false))
+          case _                       => Future.successful(CommandReply.Accepted)
     def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(Some(TopicSnapshot(id, Map("team" -> "pay"))))
 
   private val subSvc: SubscriptionService = new SubscriptionService:

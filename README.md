@@ -42,6 +42,7 @@ clustering and horizontal scaling are non-goals.
 | Streaming consume (server-streaming gRPC) | ✅ Done |
 | Bidirectional consume (stream messages + ack over one gRPC call) | ✅ Done |
 | Message TTL / expiry (drop-on-expiry, sweeper-purged) | ✅ Done |
+| Idempotent publish (producer key dedup within a window) | ✅ Done |
 
 ## Prerequisites
 
@@ -156,6 +157,40 @@ curl -X POST localhost:8080/v1/topics/orders/messages \
 > **Future:** per-topic/per-subscription TTL and dead-letter-on-expiry (an audit trail
 > for expired messages) are natural next options; today TTL is a global default plus a
 > per-publish override, and expiry drops silently.
+
+### Idempotent publish
+
+A producer that retries a timed-out publish would otherwise create a **second**
+message (each publish mints a fresh id). Supplying an **idempotency key**
+(`idempotencyKey` in the REST body, `idempotency_key` on gRPC `PublishRequest`) lets
+the broker recognise the retry: within the configured **dedup window**, a repeated key
+for the same topic is collapsed to the original publish — no second message is stored
+or delivered, and the response returns the **original** `messageId` with
+`deduplicated: true`.
+
+The check runs inside the single-writer Topic aggregate, so it is **strongly
+consistent within one topic**: it survives entity recovery (the seen-key set is
+rebuilt from the journal and kept in snapshots) rather than being best-effort. It is
+**not** cross-topic, and a key seen longer ago than the window is treated as new. An
+empty key, or a window of `0`, disables dedup — so upgrading changes nothing until you
+opt in.
+
+| Variable              | Default | Description                                        |
+|-----------------------|---------|----------------------------------------------------|
+| `HERMESMQ_DEDUP_WINDOW`| `0s`   | Dedup window for repeated idempotency keys; `0` = off. Size it to the producer's retry horizon (seconds–minutes). |
+
+```bash
+# Two publishes with the same key inside the window → one message, same id returned.
+curl -X POST localhost:8080/v1/topics/orders/messages \
+  -H 'Content-Type: application/json' -d '{"payload":"charge-42","idempotencyKey":"order-42"}'   # 202 deduplicated:false
+curl -X POST localhost:8080/v1/topics/orders/messages \
+  -H 'Content-Type: application/json' -d '{"payload":"charge-42","idempotencyKey":"order-42"}'   # 202 deduplicated:true
+```
+
+> **Note:** the seen-key set is bounded by `window × publish-rate` (pruned on write to
+> ~one window of traffic) and lives in the Topic snapshot; size the window to your
+> retry horizon rather than hours. The window is a best-effort retention bound at the
+> millisecond edge (server-clock based); the within-window retry case is exact.
 
 ### Snapshots & journal retention
 
