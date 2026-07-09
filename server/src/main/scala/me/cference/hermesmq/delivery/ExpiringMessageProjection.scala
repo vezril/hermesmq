@@ -15,53 +15,48 @@ import org.apache.pekko.projection.scaladsl.SourceProvider
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration.*
 
-/** Pekko Projection that maintains the durable outstanding-lease read model by
-  * consuming tagged lease-lifecycle events, so the redelivery sweeper can find
-  * overdue leases without scanning the entities. Runs as a single cluster-wide
-  * instance; offsets are stored in PostgreSQL so it resumes after restart.
+/** Pekko Projection that maintains the durable expiring-message read model by
+  * consuming subscription events: a delivered message with an `expireTime` is
+  * tracked, and it is removed once acknowledged, dead-lettered, or expired. Runs
+  * as a single cluster-wide instance; offsets resume after restart.
   */
-object LeaseProjection:
+object ExpiringMessageProjection:
 
-  private val ProjectionName = "subscription-lease-index"
+  private val ProjectionName = "subscription-expiry-index"
 
-  /** The per-event effect on the lease read model. Leasing/modification record a
-    * deadline; ack, expiry (back to AVAILABLE) and dead-letter clear the lease.
-    */
-  def indexEvent(repository: OutstandingLeaseRepository, subscriptionId: SubscriptionId, event: SubscriptionEvent)(using
+  /** The per-event effect on the expiring-message read model. */
+  def indexEvent(repository: ExpiringMessageRepository, subscriptionId: SubscriptionId, event: SubscriptionEvent)(using
       ExecutionContext
   ): Future[Unit] =
     event match
-      case SubscriptionEvent.MessageLeased(ackIds, deadline) =>
-        Future.traverse(ackIds)(repository.leased(subscriptionId, _, deadline)).map(_ => ())
-      case SubscriptionEvent.AckDeadlineModified(ackId, deadline) => repository.leased(subscriptionId, ackId, deadline)
-      case SubscriptionEvent.AckDeadlineExpired(ackId, _)         => repository.cleared(subscriptionId, ackId)
-      case SubscriptionEvent.MessageAcknowledged(ackId)          => repository.cleared(subscriptionId, ackId)
-      case SubscriptionEvent.MessageDeadLettered(ackId, _, _)    => repository.cleared(subscriptionId, ackId)
-      case SubscriptionEvent.MessageExpired(ackId)               => repository.cleared(subscriptionId, ackId)
-      case _                                                      => Future.unit
+      case SubscriptionEvent.MessageDelivered(ackId, message) =>
+        message.expireTime.fold(Future.unit)(t => repository.add(subscriptionId, ackId, t))
+      case SubscriptionEvent.MessageAcknowledged(ackId)      => repository.removed(subscriptionId, ackId)
+      case SubscriptionEvent.MessageDeadLettered(ackId, _, _) => repository.removed(subscriptionId, ackId)
+      case SubscriptionEvent.MessageExpired(ackId)           => repository.removed(subscriptionId, ackId)
+      case _                                                 => Future.unit
 
-  /** Extract the subscription id from a `Subscription|<id>` persistence id. */
   private def subscriptionIdOf(persistenceId: String): Option[SubscriptionId] =
     persistenceId.split('|') match
       case Array("Subscription", id) => SubscriptionId.from(id).toOption
       case _                         => None
 
-  def apply(system: ActorSystem[?], dbConfig: DbConfig, repository: OutstandingLeaseRepository) =
+  def apply(system: ActorSystem[?], dbConfig: DbConfig, repository: ExpiringMessageRepository) =
     val sourceProvider: SourceProvider[Offset, EventEnvelope[SubscriptionEvent]] =
       EventSourcedProvider.eventsByTag[SubscriptionEvent](
         system,
         readJournalPluginId = JdbcReadJournal.Identifier,
-        tag = SubscriptionEntity.LeaseTag
+        tag = SubscriptionEntity.StatsTag
       )
 
     JdbcProjection.atLeastOnce(
-      projectionId = ProjectionId(ProjectionName, SubscriptionEntity.LeaseTag),
+      projectionId = ProjectionId(ProjectionName, SubscriptionEntity.StatsTag),
       sourceProvider = sourceProvider,
       sessionFactory = () => new HermesJdbcSession(dbConfig),
       handler = () => new Handler(repository)(using system.executionContext)
     )(system)
 
-  private final class Handler(repository: OutstandingLeaseRepository)(using ExecutionContext)
+  private final class Handler(repository: ExpiringMessageRepository)(using ExecutionContext)
       extends JdbcHandler[EventEnvelope[SubscriptionEvent], HermesJdbcSession]:
 
     override def process(session: HermesJdbcSession, envelope: EventEnvelope[SubscriptionEvent]): Unit =

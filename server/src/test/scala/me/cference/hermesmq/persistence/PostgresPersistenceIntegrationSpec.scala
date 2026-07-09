@@ -157,6 +157,43 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       e2 ! SubscriptionEntityCommand.Pull(delivered + 10, 30.seconds, Instant.parse("2026-07-07T12:00:00Z"), pull.ref)
       pull.receiveMessage(20.seconds).getOrElse(Nil).size shouldBe delivered
     }
+
+    "expire a TTL'd message: purge it from outstanding while a no-ttl message survives" taggedAs PostgresIT in {
+      assume(dockerAvailable, "Docker is not available")
+
+      val subId   = SubscriptionId.from("sub-ttl-it").toOption.get
+      val topicId = TopicId.from("orders").toOption.get
+      val t0      = Instant.parse("2026-07-07T12:00:00Z")
+      val ttlMsg  = Message.from(MessageId.from("m-ttl").toOption.get, "ttl".getBytes, Map.empty, t0, expireTime = Some(t0.plusSeconds(30))).toOption.get
+      val plainMsg = Message.from(MessageId.from("m-plain").toOption.get, "plain".getBytes, Map.empty, t0).toOption.get
+      val ackTtl   = AckId.from("ack-ttl").toOption.get
+      val ackPlain = AckId.from("ack-plain").toOption.get
+      val reply    = testKit.createTestProbe[CommandReply]()
+      val pull     = testKit.createTestProbe[Option[List[PulledMessage]]]()
+
+      def submit(e: org.apache.pekko.actor.typed.ActorRef[SubscriptionEntityCommand], c: SubscriptionCommand): Unit =
+        e ! SubscriptionEntityCommand.Submit(c, reply.ref); reply.expectMessage(20.seconds, CommandReply.Accepted)
+
+      val e1 = testKit.spawn(SubscriptionEntity(subId))
+      submit(e1, SubscriptionCommand.CreateSubscription(subId, topicId))
+      submit(e1, SubscriptionCommand.RecordDelivery(ackTtl, ttlMsg))
+      submit(e1, SubscriptionCommand.RecordDelivery(ackPlain, plainMsg))
+
+      // Expire the TTL'd message (as the sweeper would), past its expireTime.
+      submit(e1, SubscriptionCommand.ExpireMessage(ackTtl, t0.plusSeconds(31)))
+
+      // Pull after expiry returns only the surviving no-ttl message; the expired one is gone.
+      e1 ! SubscriptionEntityCommand.Pull(10, 30.seconds, t0.plusSeconds(31), pull.ref)
+      pull.receiveMessage(20.seconds) shouldBe Some(List(PulledMessage(ackPlain, plainMsg)))
+
+      // Purge survives restart: the expired message is gone, the surviving one recovers.
+      testKit.stop(e1)
+      val e2 = testKit.spawn(SubscriptionEntity(subId))
+      e2 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.Acknowledge(ackTtl), reply.ref)
+      reply.expectMessage(20.seconds, CommandReply.Rejected(Rejection.UnknownAckId(ackTtl))) // expired → gone
+      e2 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.Acknowledge(ackPlain), reply.ref)
+      reply.expectMessage(20.seconds, CommandReply.Accepted) // survived and recovered
+    }
   }
 
   /** Count journaled events for a persistence id directly in Postgres. */

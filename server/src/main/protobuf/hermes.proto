@@ -78,6 +78,8 @@ message PublishRequest {
   string topic_id = 1;
   bytes payload = 2;
   map<string, string> attributes = 3;
+  // Optional per-message TTL in seconds (0 = use the configured default / none).
+  int32 ttl_seconds = 4;
 }
 message PublishResponse {
   string message_id = 1;

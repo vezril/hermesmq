@@ -37,3 +37,19 @@ final class MessageSpec extends AnyFunSuite:
     bytes(0) = 'z'.toByte
     assert(msg.payload == "abc".getBytes.toVector)
   }
+
+  test("a message has no expireTime by default and is never expired") {
+    val msg = Message.from(id, "x".getBytes, Map.empty, now).toOption.get
+    assert(msg.expireTime.isEmpty)
+    assert(!msg.expired(now.plusSeconds(10_000)))
+  }
+
+  test("a message with an expireTime is expired at or after that instant") {
+    val expireAt = now.plusSeconds(60)
+    val msg = Message.from(id, "x".getBytes, Map.empty, now, expireTime = Some(expireAt)).toOption.get
+    assert(msg.expireTime == Some(expireAt))
+    assert(!msg.expired(now))                    // before
+    assert(!msg.expired(expireAt.minusSeconds(1)))
+    assert(msg.expired(expireAt))                // at
+    assert(msg.expired(expireAt.plusSeconds(1))) // after
+  }

@@ -3,8 +3,8 @@ package me.cference.hermesmq
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
 import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
-import me.cference.hermesmq.config.{AuthConfig, DbConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig, StreamConfig}
-import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection}
+import me.cference.hermesmq.config.{AuthConfig, DbConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig, StreamConfig, TtlConfig}
+import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, ExpiringMessageProjection, JdbcExpiringMessageRepository, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection, TtlSweeper}
 import me.cference.hermesmq.grpc.{GrpcServer, PubSubPowerApi, TopicAdminPowerApi}
 import me.cference.hermesmq.http.{Auth, HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
 import me.cference.hermesmq.observability.{JdbcSubscriptionStatsRepository, JdbcTopicStatsRepository, ObservabilityRoutes, SubscriptionStatsProjection, TopicStatsProjection}
@@ -40,14 +40,15 @@ object Main:
         retentionConfig  <- RetentionConfig.from(rawConfig)
         authConfig       <- AuthConfig.from(rawConfig)
         streamConfig     <- StreamConfig.from(rawConfig)
-      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig)
+        ttlConfig        <- TtlConfig.from(rawConfig)
+      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig)) =>
+      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig)) =>
         val persistenceHealth = PersistenceHealth(dbConfig)
         val readiness         = Readiness(persistenceHealthy = () => persistenceHealth.healthy())
 
@@ -67,6 +68,7 @@ object Main:
           val leaseRepo         = JdbcOutstandingLeaseRepository(dbConfig)
           val subStatsRepo      = JdbcSubscriptionStatsRepository(dbConfig)
           val topicStatsRepo    = JdbcTopicStatsRepository(dbConfig)
+          val expiringRepo      = JdbcExpiringMessageRepository(dbConfig)
 
           // Single cluster-wide projections: maintain the index, fan out deliveries,
           // track outstanding leases, and route dead-lettered messages.
@@ -107,6 +109,21 @@ object Main:
             stopMessage = RedeliverySweeper.Stop
           )
 
+          // TTL: track outstanding messages that carry an expireTime, and a single
+          // cluster-wide sweeper that purges them once past their TTL.
+          ShardedDaemonProcess(ctx.system).init(
+            name = "expiry-index-projection",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) => ProjectionBehavior(ExpiringMessageProjection(ctx.system, dbConfig, expiringRepo)),
+            stopMessage = ProjectionBehavior.Stop
+          )
+          ShardedDaemonProcess(ctx.system).init(
+            name = "ttl-sweeper",
+            numberOfInstances = 1,
+            behaviorFactory = (_: Int) => TtlSweeper(expiringRepo, subscriptionService, redeliveryConfig.sweepInterval),
+            stopMessage = TtlSweeper.Stop
+          )
+
           // Single cluster-wide observability projections (exactly-once so counters
           // are not double-counted on replay): per-subscription and per-topic stats.
           ShardedDaemonProcess(ctx.system).init(
@@ -134,7 +151,7 @@ object Main:
                 val scopedTopics = TenantScopedTopicService(topicService, tenantScope, principal.tenant)
                 val scopedSubs   = TenantScopedSubscriptionService(subscriptionService, tenantScope, principal.tenant)
                 TopicAdminRoutes(scopedTopics, principal).routes ~
-                  PubSubRoutes(scopedTopics, scopedSubs).routes ~
+                  PubSubRoutes(scopedTopics, scopedSubs, ttlConfig).routes ~
                   observability.listings(principal, tenantScope)
               }
 
@@ -149,7 +166,7 @@ object Main:
           // gRPC endpoint (HTTP/2): metadata-aware power APIs authenticate + tenant-scope.
           given org.apache.pekko.actor.ActorSystem = ctx.system.classicSystem
           val topicAdminGrpc = TopicAdminPowerApi(topicService, authenticator, tenantScope, authConfig)
-          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig)
+          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig)
           GrpcServer.start(ctx.system, grpcConfig, topicAdminGrpc, pubSubGrpc).onComplete {
             case Success(binding) =>
               ctx.log.info("HermesMQ gRPC listening on {}", binding.localAddress)
