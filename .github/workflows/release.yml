@@ -16,6 +16,11 @@ jobs:
   release:
     name: Build, Publish & Release
     runs-on: ubuntu-latest
+    # Every sbt step (the test gate, publish, Docker) resolves the Lexicon gRPC
+    # stubs (io.codex %% lexicon-hermes-grpc) from the-lexicon's GitHub Packages,
+    # so the read:packages token must be present job-wide, not only on publish.
+    env:
+      GITHUB_TOKEN: ${{ secrets.LEXICON_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout (full history for sbt-dynver)
         uses: actions/checkout@v4
