@@ -62,6 +62,19 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
   private def start(sub: String, max: Int) = ConsumeRequest().withStart(ConsumeStart(subscriptionId = sub, max = max))
   private def ackReq(ids: String*)          = ConsumeRequest().withAck(ConsumeAck(ackIds = ids))
 
+  "PubSubGrpcService publish TTL" should {
+    "set expireTime from ttlSeconds" in {
+      @volatile var published: Option[Message] = None
+      val capturing = new TopicService:
+        def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+          command match { case TopicCommand.Publish(m) => published = Some(m); case _ => () }
+          Future.successful(CommandReply.Accepted)
+        def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
+      await(PubSubGrpcService(capturing, subs()).publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), ttlSeconds = 60)))
+      published.flatMap(_.expireTime).isDefined shouldBe true
+    }
+  }
+
   "PubSubGrpcService.consume" should {
     "open on ConsumeStart, stream leased messages, and apply inbound acks" in {
       val subsvc = CapturingSubs(Some(List(PulledMessage(ackId, message))))

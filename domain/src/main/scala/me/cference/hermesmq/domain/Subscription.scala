@@ -11,6 +11,7 @@ enum SubscriptionCommand:
   case Acknowledge(ackId: AckId)
   case ModifyAckDeadline(ackId: AckId, ackDeadline: FiniteDuration, now: Instant)
   case ExpireAckDeadline(ackId: AckId, now: Instant, maxAttempts: Int)
+  case ExpireMessage(ackId: AckId, now: Instant)
 
 /** Events emitted by the Subscription aggregate. */
 enum SubscriptionEvent:
@@ -21,6 +22,7 @@ enum SubscriptionEvent:
   case AckDeadlineModified(ackId: AckId, deadline: Instant)
   case AckDeadlineExpired(ackId: AckId, attempt: Int)
   case MessageDeadLettered(ackId: AckId, message: Message, attempt: Int)
+  case MessageExpired(ackId: AckId)
 
 /** The lease state of an outstanding message: AVAILABLE (pullable) or LEASED
   * with an ack deadline (invisible until the deadline passes).
@@ -70,7 +72,8 @@ object Subscription:
       case SubscriptionCommand.Lease(max, ackDeadline, now) =>
         if !state.exists then Left(Rejection.SubscriptionNotFound)
         else
-          val toLease = state.availableMessages.take(math.max(0, max)).map(_._1)
+          // Expired messages are never leased/returned; the sweeper purges them.
+          val toLease = state.availableMessages.filterNot(_._2.message.expired(now)).take(math.max(0, max)).map(_._1)
           if toLease.isEmpty then Right(Nil)
           else Right(List(SubscriptionEvent.MessageLeased(toLease, now.plusMillis(ackDeadline.toMillis))))
 
@@ -91,6 +94,13 @@ object Subscription:
               Right(List(SubscriptionEvent.MessageDeadLettered(ackId, message, attempt)))
             else Right(List(SubscriptionEvent.AckDeadlineExpired(ackId, attempt)))
           case _ => Right(Nil) // not leased, not overdue, or gone → no-op
+
+      case SubscriptionCommand.ExpireMessage(ackId, now) =>
+        // Wall-clock TTL expiry: drop an outstanding message past its expireTime,
+        // in any lease state and regardless of attempt count.
+        state.outstanding.get(ackId) match
+          case Some(o) if o.message.expired(now) => Right(List(SubscriptionEvent.MessageExpired(ackId)))
+          case _                                 => Right(Nil) // not outstanding, or not yet expired → no-op
 
   def evolve(state: SubscriptionState, event: SubscriptionEvent): SubscriptionState =
     event match
@@ -118,6 +128,9 @@ object Subscription:
           case None    => state
 
       case SubscriptionEvent.MessageDeadLettered(ackId, _, _) =>
+        state.copy(outstanding = state.outstanding.removed(ackId))
+
+      case SubscriptionEvent.MessageExpired(ackId) =>
         state.copy(outstanding = state.outstanding.removed(ackId))
 
   private def updateLease(state: SubscriptionState, ackId: AckId, lease: LeaseState): SubscriptionState =

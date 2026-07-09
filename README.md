@@ -41,6 +41,7 @@ clustering and horizontal scaling are non-goals.
 | Authentication & multi-tenant isolation (REST + gRPC) | ✅ Done |
 | Streaming consume (server-streaming gRPC) | ✅ Done |
 | Bidirectional consume (stream messages + ack over one gRPC call) | ✅ Done |
+| Message TTL / expiry (drop-on-expiry, sweeper-purged) | ✅ Done |
 
 ## Prerequisites
 
@@ -125,6 +126,30 @@ can be overridden by environment variables:
 An invalid or out-of-range port — or a non-positive ack-deadline / sweep-interval,
 or a negative max-delivery-attempts — fails fast at startup with a clear error and
 a non-zero exit code.
+
+### Message TTL
+
+Messages can carry a **time-to-live** so undelivered/unacknowledged messages expire
+and are purged instead of accumulating forever. A publish may set `ttlSeconds` (REST
+JSON field or gRPC `ttl_seconds`); otherwise the global default `HERMESMQ_TTL_DEFAULT`
+applies. A message's `expireTime` is `publishTime + TTL`; once past it, the message is
+never delivered (skipped on pull) and the periodic sweeper **drops** it from the
+subscription — distinct from ack-deadline redelivery and max-attempts dead-lettering
+(TTL is wall-clock expiry regardless of attempts). Expired messages are dropped, not
+dead-lettered.
+
+| Variable              | Default | Description                                        |
+|-----------------------|---------|----------------------------------------------------|
+| `HERMESMQ_TTL_DEFAULT`| `0s`    | Default message TTL; `0` = off. Per-publish `ttlSeconds` overrides it. |
+
+```bash
+curl -X POST localhost:8080/v1/topics/orders/messages \
+  -H 'Content-Type: application/json' -d '{"payload":"stale-in-60s","ttlSeconds":60}'   # 202
+```
+
+> **Future:** per-topic/per-subscription TTL and dead-letter-on-expiry (an audit trail
+> for expired messages) are natural next options; today TTL is a global default plus a
+> per-publish override, and expiry drops silently.
 
 ### Snapshots & journal retention
 

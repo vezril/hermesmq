@@ -114,3 +114,14 @@ CREATE TABLE IF NOT EXISTS public.topic_stats (
     deleted         BOOLEAN      NOT NULL DEFAULT false,
     PRIMARY KEY (topic_id)
 );
+
+-- Durable, cluster-shared read model of outstanding messages carrying a TTL
+-- (message-ttl); queried by the TTL sweeper to purge expired messages without
+-- scanning the entities. Only messages with an expireTime appear here.
+CREATE TABLE IF NOT EXISTS public.expiring_messages (
+    subscription_id VARCHAR(255) NOT NULL,
+    ack_id          VARCHAR(255) NOT NULL,
+    expire_time     TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (subscription_id, ack_id)
+);
+CREATE INDEX IF NOT EXISTS expiring_messages_expire_idx ON public.expiring_messages (expire_time);

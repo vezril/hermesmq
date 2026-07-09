@@ -11,6 +11,7 @@ import spray.json.*
 
 import java.time.Instant
 import scala.concurrent.Future
+import scala.concurrent.duration.*
 
 /** Route tests for the pub/sub API, backed by stub services. */
 final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRouteTest with DefaultJsonProtocol:
@@ -38,6 +39,45 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
       topics: TopicService = topicStub(),
       subs: SubscriptionService = subStub()
   ) = Route.seal(PubSubRoutes(topics, subs).routes)
+
+  /** Captures the message of the last Publish command, to inspect TTL. */
+  private final class CapturingTopics extends TopicService:
+    @volatile var lastPublished: Option[Message] = None
+    def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+      command match
+        case TopicCommand.Publish(m) => lastPublished = Some(m)
+        case _                       => ()
+      Future.successful(CommandReply.Accepted)
+    def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
+
+  "TTL on publish" should {
+    "set expireTime from ttlSeconds" in {
+      val cap = CapturingTopics()
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi","ttlSeconds":60}""")) ~>
+        Route.seal(PubSubRoutes(cap, subStub(), me.cference.hermesmq.config.TtlConfig.Default).routes) ~> check {
+          status shouldBe StatusCodes.Accepted
+          val m = cap.lastPublished.getOrElse(fail("no message published"))
+          m.expireTime.isDefined shouldBe true
+          m.expireTime.get.isAfter(m.publishTime) shouldBe true
+        }
+    }
+
+    "apply the configured default TTL when no ttlSeconds is given" in {
+      val cap = CapturingTopics()
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi"}""")) ~>
+        Route.seal(PubSubRoutes(cap, subStub(), me.cference.hermesmq.config.TtlConfig(30.seconds)).routes) ~> check {
+          cap.lastPublished.flatMap(_.expireTime).isDefined shouldBe true
+        }
+    }
+
+    "leave expireTime unset when neither ttlSeconds nor a default is set" in {
+      val cap = CapturingTopics()
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi"}""")) ~>
+        Route.seal(PubSubRoutes(cap, subStub(), me.cference.hermesmq.config.TtlConfig.Default).routes) ~> check {
+          cap.lastPublished.flatMap(_.expireTime) shouldBe None
+        }
+    }
+  }
 
   "POST /v1/topics/{id}/messages" should {
     "accept a publish and return 202 with a messageId" in {
