@@ -3,7 +3,9 @@ package me.cference.hermesmq.grpc
 import com.google.protobuf.ByteString
 import io.grpc.Status
 import me.cference.hermesmq.domain.*
+import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.persistence.*
+import org.slf4j.MDC
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
@@ -184,6 +186,40 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       resp.messages.map(_.ackId) shouldBe Seq("ack-1")
       resp.messages.head.message.map(_.messageId) shouldBe Some("m-1")
       resp.messages.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
+    }
+
+    "record a named consumer as active on pull" in {
+      val reg = ConsumerRegistry(1.minute)
+      val svc = PubSubGrpcService(topics(), subs(), consumers = reg)
+      await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "worker-3")))
+      reg.activeCount(SubscriptionId.from("orders").toOption.get, Instant.now()) shouldBe 1
+    }
+
+    "not record a consumer when the id is empty (anonymous pull)" in {
+      val reg = ConsumerRegistry(1.minute)
+      val svc = PubSubGrpcService(topics(), subs(), consumers = reg)
+      await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "")))
+      reg.activeCount(SubscriptionId.from("orders").toOption.get, Instant.now()) shouldBe 0
+    }
+
+    "record a named consumer when a stream is opened" in {
+      val reg = ConsumerRegistry(1.minute)
+      val svc = PubSubGrpcService(topics(), subs(), consumers = reg)
+      val _   = svc.streamMessages(StreamRequest(subscriptionId = "orders", consumerId = "stream-1")) // touch at open
+      reg.activeCount(SubscriptionId.from("orders").toOption.get, Instant.now()) shouldBe 1
+    }
+
+    "set the consumer MDC during a pull and clear it afterwards" in {
+      @volatile var during: String = null
+      val capturing = new SubscriptionService:
+        def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] = Future.successful(CommandReply.Accepted)
+        def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] =
+          during = MDC.get("consumer")
+          Future.successful(Some(Nil))
+      val svc = PubSubGrpcService(topics(), capturing, consumers = ConsumerRegistry(1.minute))
+      await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "worker-3")))
+      during shouldBe "worker-3"
+      MDC.get("consumer") shouldBe null
     }
 
     "map pull of a missing subscription to NOT_FOUND" in {

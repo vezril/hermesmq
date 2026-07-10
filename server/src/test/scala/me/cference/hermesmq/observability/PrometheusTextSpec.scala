@@ -39,7 +39,19 @@ final class PrometheusTextSpec extends AnyWordSpec with Matchers:
       val out = PrometheusText.render(Nil, Nil, now)
       out should include("# TYPE hermesmq_subscription_backlog gauge")
       out should include("# TYPE hermesmq_messages_published_total counter")
+      out should include("# TYPE hermesmq_subscription_consumers gauge")
       out should not include "hermesmq_subscription_backlog{"
-      out should not include "hermesmq_messages_published_total{"
+      out should not include "hermesmq_subscription_consumers{"
+    }
+
+    "emit the active-consumer gauge from the consumer counts" in {
+      val out = PrometheusText.render(
+        Nil,
+        Nil,
+        now,
+        consumerCounts = Map(SubscriptionId.from("s1").toOption.get -> 2)
+      )
+      out should include("# TYPE hermesmq_subscription_consumers gauge")
+      out should include("""hermesmq_subscription_consumers{subscription="s1"} 2""")
     }
   }
