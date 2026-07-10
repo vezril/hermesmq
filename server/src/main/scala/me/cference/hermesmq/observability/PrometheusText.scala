@@ -1,5 +1,7 @@
 package me.cference.hermesmq.observability
 
+import me.cference.hermesmq.domain.SubscriptionId
+
 import java.time.Instant
 
 /** Renders the stats read models as Prometheus text exposition (version 0.0.4),
@@ -22,7 +24,12 @@ object PrometheusText:
   private def escape(value: String): String =
     value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 
-  def render(subscriptions: List[SubscriptionStats], topics: List[TopicStats], now: Instant): String =
+  def render(
+      subscriptions: List[SubscriptionStats],
+      topics: List[TopicStats],
+      now: Instant,
+      consumerCounts: Map[SubscriptionId, Int] = Map.empty
+  ): String =
     List(
       block(
         "hermesmq_subscription_backlog",
@@ -53,5 +60,11 @@ object PrometheusText:
         "Total dead-lettered messages per subscription.",
         "counter",
         subscriptions.map(s => ("subscription", s.subscriptionId.value, s.deadLetteredTotal))
+      ),
+      block(
+        "hermesmq_subscription_consumers",
+        "Distinct named consumers active within the configured window per subscription.",
+        "gauge",
+        consumerCounts.toList.sortBy((sub, _) => sub.value).map((sub, count) => ("subscription", sub.value, count.toLong))
       )
     ).mkString

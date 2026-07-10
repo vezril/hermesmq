@@ -3,11 +3,11 @@ package me.cference.hermesmq
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
 import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
-import me.cference.hermesmq.config.{AuthConfig, DbConfig, DedupConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig, StreamConfig, TtlConfig}
+import me.cference.hermesmq.config.{AuthConfig, ConsumersConfig, DbConfig, DedupConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig, StreamConfig, TtlConfig}
 import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, ExpiringMessageProjection, JdbcExpiringMessageRepository, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection, TtlSweeper}
 import me.cference.hermesmq.grpc.{GrpcServer, PubSubPowerApi, TopicAdminPowerApi}
 import me.cference.hermesmq.http.{Auth, HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
-import me.cference.hermesmq.observability.{JdbcSubscriptionStatsRepository, JdbcTopicStatsRepository, ObservabilityRoutes, SubscriptionStatsProjection, TopicStatsProjection}
+import me.cference.hermesmq.observability.{ConsumerRegistry, JdbcSubscriptionStatsRepository, JdbcTopicStatsRepository, ObservabilityRoutes, SubscriptionStatsProjection, TopicStatsProjection}
 import me.cference.hermesmq.persistence.{PersistenceHealth, SchemaMigrator}
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
@@ -42,14 +42,15 @@ object Main:
         streamConfig     <- StreamConfig.from(rawConfig)
         ttlConfig        <- TtlConfig.from(rawConfig)
         dedupConfig      <- DedupConfig.from(rawConfig)
-      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig)
+        consumersConfig  <- ConsumersConfig.from(rawConfig)
+      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig, consumersConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig)) =>
+      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig, consumersConfig)) =>
         // Apply the bundled schema before anything touches the database, so
         // projections and aggregates never race a missing table. Idempotent, so
         // a no-op over an already-provisioned DB. Fail fast, like a config error.
@@ -152,15 +153,18 @@ object Main:
           val authenticator = Authenticator(authConfig.keys)
           val tenantScope   = new TenantScope(authConfig.defaultTenant)
 
+          // Shared, per-node registry of active named consumers (best-effort).
+          val consumerRegistry = ConsumerRegistry(consumersConfig.activityWindow)
+
           // REST: /metrics is public; /v1 requires auth and is tenant-scoped.
-          val observability = ObservabilityRoutes(subStatsRepo, topicStatsRepo)
+          val observability = ObservabilityRoutes(subStatsRepo, topicStatsRepo, consumers = consumerRegistry)
           val apiRoutes =
             observability.metricsRoute ~
               Auth.authenticate(authenticator, authConfig) { principal =>
                 val scopedTopics = TenantScopedTopicService(topicService, tenantScope, principal.tenant)
                 val scopedSubs   = TenantScopedSubscriptionService(subscriptionService, tenantScope, principal.tenant)
                 TopicAdminRoutes(scopedTopics, principal).routes ~
-                  PubSubRoutes(scopedTopics, scopedSubs, ttlConfig).routes ~
+                  PubSubRoutes(scopedTopics, scopedSubs, ttlConfig, consumerRegistry).routes ~
                   observability.listings(principal, tenantScope)
               }
 
@@ -175,7 +179,7 @@ object Main:
           // gRPC endpoint (HTTP/2): metadata-aware power APIs authenticate + tenant-scope.
           given org.apache.pekko.actor.ActorSystem = ctx.system.classicSystem
           val topicAdminGrpc = TopicAdminPowerApi(topicService, authenticator, tenantScope, authConfig)
-          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig)
+          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig, consumerRegistry)
           GrpcServer.start(ctx.system, grpcConfig, topicAdminGrpc, pubSubGrpc).onComplete {
             case Success(binding) =>
               ctx.log.info("HermesMQ gRPC listening on {}", binding.localAddress)

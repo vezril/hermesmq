@@ -35,7 +35,8 @@ object ObservabilityJson extends DefaultJsonProtocol:
 final class ObservabilityRoutes(
     subscriptions: SubscriptionStatsRepository,
     topics: TopicStatsRepository,
-    now: () => Instant
+    now: () => Instant,
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
 )(using ExecutionContext):
   import ObservabilityJson.given
   import SprayJsonSupport.*
@@ -83,7 +84,7 @@ final class ObservabilityRoutes(
     for
       s <- subscriptions.list()
       t <- topics.list()
-    yield PrometheusText.render(s, t, at)
+    yield PrometheusText.render(s, t, at, consumers.activeCountsBySubscription(at))
 
   private def toJson(at: Instant, scope: TenantScope, principal: Principal)(s: SubscriptionStats): SubscriptionStatsJson =
     SubscriptionStatsJson(
@@ -102,6 +103,7 @@ object ObservabilityRoutes:
   def apply(
       subscriptions: SubscriptionStatsRepository,
       topics: TopicStatsRepository,
-      now: () => Instant = () => Instant.now()
+      now: () => Instant = () => Instant.now(),
+      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
   )(using ExecutionContext): ObservabilityRoutes =
-    new ObservabilityRoutes(subscriptions, topics, now)
+    new ObservabilityRoutes(subscriptions, topics, now, consumers)

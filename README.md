@@ -45,6 +45,7 @@ clustering and horizontal scaling are non-goals.
 | Idempotent publish (producer key dedup within a window) | ✅ Done |
 | Schema self-migration on boot (idempotent, opt-out) | ✅ Done |
 | Structured JSON logging (`LOG_FORMAT`, constellation schema) | ✅ Done |
+| Named consumers (optional consumer id + active-consumer metric) | ✅ Done |
 
 ## Prerequisites
 
@@ -440,6 +441,7 @@ Exposed metrics:
 | `hermesmq_messages_published_total` | counter | `topic` | Messages published to the topic |
 | `hermesmq_messages_redelivered_total` | counter | `subscription` | Redeliveries (ack-deadline expiries) |
 | `hermesmq_messages_dead_lettered_total` | counter | `subscription` | Dead-lettered messages |
+| `hermesmq_subscription_consumers` | gauge | `subscription` | Distinct named consumers active within the window |
 
 ```bash
 curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...}]
@@ -466,6 +468,29 @@ so queries resolve identically across services: `@timestamp`, `level`,
 `logger_name`, `thread_name`, `message`, `service` (here `hermesmq`),
 `stack_trace` (on error), plus any MDC entries as top-level fields. This is a
 format-only concern — log levels and call sites are unchanged.
+
+### Named consumers
+
+A subscription is already a **competing-consumer group** — concurrent consumers
+of one subscription load-balance, each message leased to exactly one of them. To
+make that fan-out observable, a consumer may **name itself**: `Pull`,
+`StreamMessages`, and `Consume` carry an optional `consumer_id` (REST pull takes
+`consumerId` in the body). It's purely for observability — it does not change
+which messages are leased.
+
+Naming a consumer feeds two things: the `hermesmq_subscription_consumers` gauge
+(distinct consumers seen within the activity window, per subscription), and a
+`consumer` field on the JSON logs emitted while serving that call. An empty/absent
+id is anonymous (today's behaviour).
+
+| Variable                            | Default | Description                                                    |
+|-------------------------------------|---------|----------------------------------------------------------------|
+| `HERMESMQ_CONSUMERS_ACTIVITY_WINDOW`| `60s`   | How long a consumer counts as active since its last consume. `0` = off (registry + metric disabled). |
+
+> **Caveat:** the registry is an in-memory, **per-node**, best-effort view — the
+> gauge reflects consumers attached to *this* instance. That is exact under the
+> single-replica deployment; cluster-wide aggregation is a future extension (the
+> metric name and meaning would not change).
 
 ## Scala client library
 
