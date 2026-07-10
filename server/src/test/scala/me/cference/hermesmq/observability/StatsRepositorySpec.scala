@@ -40,7 +40,7 @@ final class StatsRepositorySpec extends AnyWordSpec with Matchers:
       SubscriptionStatsFold(repo, sub, SubscriptionEvent.MessageDelivered(ack(2), msgAt(t0.plusSeconds(30))))
 
       val s = await(repo.list()).head
-      s.oldestUnackedAt shouldBe Some(t0)
+      val _ = s.oldestUnackedAt shouldBe Some(t0)
       s.oldestUnackedAgeSeconds(t0.plusSeconds(90)) shouldBe 90
     }
 
@@ -52,8 +52,8 @@ final class StatsRepositorySpec extends AnyWordSpec with Matchers:
       SubscriptionStatsFold(repo, sub, SubscriptionEvent.MessageDeadLettered(ack(1), msgAt(t0), 5))
 
       val s = await(repo.list()).head
-      s.redeliveredTotal shouldBe 1
-      s.deadLetteredTotal shouldBe 1
+      val _ = s.redeliveredTotal shouldBe 1
+      val _ = s.deadLetteredTotal shouldBe 1
       s.backlog shouldBe 0 // dead-letter removed it
     }
 
@@ -64,8 +64,8 @@ final class StatsRepositorySpec extends AnyWordSpec with Matchers:
       SubscriptionStatsFold(repo, sub, SubscriptionEvent.MessageAcknowledged(ack(1)))
 
       val s = await(repo.list()).head
-      s.backlog shouldBe 0
-      s.oldestUnackedAt shouldBe None
+      val _ = s.backlog shouldBe 0
+      val _ = s.oldestUnackedAt shouldBe None
       s.oldestUnackedAgeSeconds(t0.plusSeconds(100)) shouldBe 0
     }
   }
@@ -74,7 +74,7 @@ final class StatsRepositorySpec extends AnyWordSpec with Matchers:
     "register a topic with zero count on creation and increment on publish" in {
       val repo = InMemoryTopicStatsRepository()
       TopicStatsFold(repo, topic, TopicEvent.TopicCreated(topic))
-      await(repo.list()).head shouldBe TopicStats(topic, 0, deleted = false)
+      val _ = await(repo.list()).head shouldBe TopicStats(topic, 0, deleted = false)
 
       TopicStatsFold(repo, topic, TopicEvent.MessagePublished(msgAt(t0)))
       TopicStatsFold(repo, topic, TopicEvent.MessagePublished(msgAt(t0)))

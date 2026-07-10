@@ -1,6 +1,7 @@
 package me.cference.hermesmq.grpc
 
-import me.cference.hermesmq.auth.{Authenticator, Principal}
+import me.cference.hermesmq.auth.Authenticator
+import me.cference.hermesmq.auth.Principal
 import me.cference.hermesmq.config.AuthConfig
 import org.apache.pekko.grpc.scaladsl.Metadata
 

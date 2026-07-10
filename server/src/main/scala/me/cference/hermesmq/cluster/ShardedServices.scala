@@ -1,6 +1,9 @@
 package me.cference.hermesmq.cluster
 
-import me.cference.hermesmq.domain.{SubscriptionCommand, SubscriptionId, TopicCommand, TopicId}
+import me.cference.hermesmq.domain.SubscriptionCommand
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.util.Timeout

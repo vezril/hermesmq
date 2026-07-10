@@ -2,7 +2,8 @@ package me.cference.hermesmq.observability
 
 import me.cference.hermesmq.config.DbConfig
 import me.cference.hermesmq.delivery.HermesJdbcSession
-import me.cference.hermesmq.domain.{SubscriptionEvent, SubscriptionId}
+import me.cference.hermesmq.domain.SubscriptionEvent
+import me.cference.hermesmq.domain.SubscriptionId
 import me.cference.hermesmq.persistence.SubscriptionEntity
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.jdbc.query.scaladsl.JdbcReadJournal
@@ -10,7 +11,8 @@ import org.apache.pekko.persistence.query.Offset
 import org.apache.pekko.projection.ProjectionId
 import org.apache.pekko.projection.eventsourced.EventEnvelope
 import org.apache.pekko.projection.eventsourced.scaladsl.EventSourcedProvider
-import org.apache.pekko.projection.jdbc.scaladsl.{JdbcHandler, JdbcProjection}
+import org.apache.pekko.projection.jdbc.scaladsl.JdbcHandler
+import org.apache.pekko.projection.jdbc.scaladsl.JdbcProjection
 import org.apache.pekko.projection.scaladsl.SourceProvider
 
 import java.sql.Connection

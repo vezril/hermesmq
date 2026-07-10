@@ -39,7 +39,7 @@ final class SubscriptionRecoverySpec
     kit.clear()
 
   private def send(command: SubscriptionCommand): Unit =
-    kit.runCommand[CommandReply](replyTo => SubscriptionEntityCommand.Submit(command, replyTo))
+    val _ = kit.runCommand[CommandReply](replyTo => SubscriptionEntityCommand.Submit(command, replyTo))
 
   "Subscription recovery" should {
     "rebuild an outstanding message from the journal after restart" in {
@@ -47,7 +47,7 @@ final class SubscriptionRecoverySpec
       send(RecordDelivery(ackId, message))
 
       val recovered = kit.restart().state
-      recovered.exists shouldBe true
+      val _ = recovered.exists shouldBe true
       recovered.outstanding.contains(ackId) shouldBe true
     }
 
@@ -62,7 +62,7 @@ final class SubscriptionRecoverySpec
 
     "recover a fresh persistence id to empty state and accept a create" in {
       val recovered = kit.restart().state
-      recovered.exists shouldBe false
+      val _ = recovered.exists shouldBe false
 
       val result = kit.runCommand[CommandReply](replyTo => SubscriptionEntityCommand.Submit(CreateSubscription(subId, topicId), replyTo))
       result.reply shouldBe CommandReply.Accepted

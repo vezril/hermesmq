@@ -1,12 +1,17 @@
 package me.cference.hermesmq.delivery
 
 import me.cference.hermesmq.config.DbConfig
-import me.cference.hermesmq.domain.{AckId, SubscriptionId}
+import me.cference.hermesmq.domain.AckId
+import me.cference.hermesmq.domain.SubscriptionId
 
-import java.sql.{Connection, DriverManager, Timestamp}
+import java.sql.Connection
+import java.sql.DriverManager
+import java.sql.Timestamp
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.{ExecutionContext, Future, blocking}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
+import scala.concurrent.blocking
 
 /** One outstanding message that carries a TTL, and the instant it expires. */
 final case class ExpiringMessage(subscriptionId: SubscriptionId, ackId: AckId, expireTime: Instant)
@@ -75,14 +80,17 @@ final class JdbcExpiringMessageRepository(dbConfig: DbConfig)(using ExecutionCon
         withConnection { conn =>
           val ps = conn.prepareStatement("SELECT subscription_id, ack_id, expire_time FROM expiring_messages WHERE expire_time <= ?")
           ps.setTimestamp(1, Timestamp.from(now))
-          val rs      = ps.executeQuery()
-          val builder = List.newBuilder[ExpiringMessage]
-          while rs.next() do
-            for
-              sub <- SubscriptionId.from(rs.getString(1)).toOption
-              ack <- AckId.from(rs.getString(2)).toOption
-            do builder += ExpiringMessage(sub, ack, rs.getTimestamp(3).toInstant)
-          builder.result()
+          val rs = ps.executeQuery()
+          Iterator
+            .continually(rs)
+            .takeWhile(_.next())
+            .flatMap { r =>
+              for
+                sub <- SubscriptionId.from(r.getString(1)).toOption
+                ack <- AckId.from(r.getString(2)).toOption
+              yield ExpiringMessage(sub, ack, r.getTimestamp(3).toInstant)
+            }
+            .toList
         }
       }
     }

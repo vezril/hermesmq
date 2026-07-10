@@ -2,21 +2,27 @@ package me.cference.hermesmq.http
 
 import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.TtlConfig
-import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService, TopicService}
+import me.cference.hermesmq.observability.ConsumerRegistry
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.PulledMessage
+import me.cference.hermesmq.persistence.SubscriptionService
+import me.cference.hermesmq.persistence.TopicService
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
-import spray.json.{DefaultJsonProtocol, RootJsonFormat}
+import spray.json.DefaultJsonProtocol
+import spray.json.RootJsonFormat
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Instant
 import java.util.UUID
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.concurrent.duration.*
-import scala.util.{Failure, Success}
+import scala.util.Failure
+import scala.util.Success
 
 /** JSON models for the pub/sub API. */
 final case class PublishRequest(

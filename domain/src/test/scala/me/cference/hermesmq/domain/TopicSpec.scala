@@ -21,7 +21,7 @@ final class TopicSpec extends AnyFunSuite:
 
   test("creating a new topic emits TopicCreated and evolves to existing") {
     val events = Topic.decide(Topic.empty, CreateTopic(topicId))
-    assert(events == Right(List(TopicCreated(topicId))))
+    val _ = assert(events == Right(List(TopicCreated(topicId))))
     val state = events.toOption.get.foldLeft(Topic.empty)((s, e) => Topic.evolve(s, e))
     assert(state.exists)
   }
@@ -56,20 +56,20 @@ final class TopicSpec extends AnyFunSuite:
 
   test("creating a topic carries its labels") {
     val events = Topic.decide(Topic.empty, CreateTopic(topicId, labels))
-    assert(events == Right(List(TopicCreated(topicId, labels))))
+    val _ = assert(events == Right(List(TopicCreated(topicId, labels))))
     assert(events.toOption.get.foldLeft(Topic.empty)((s, e) => Topic.evolve(s, e)).labels == labels)
   }
 
   test("deleting an active topic emits TopicDeleted and marks it deleted") {
     val events = Topic.decide(active(), DeleteTopic)
-    assert(events == Right(List(TopicDeleted(topicId))))
+    val _ = assert(events == Right(List(TopicDeleted(topicId))))
     assert(events.toOption.get.foldLeft(active())((s, e) => Topic.evolve(s, e)).deleted)
   }
 
   test("updating labels on an active topic emits TopicLabelsUpdated and replaces them") {
     val newLabels = Map("team" -> "core")
     val events = Topic.decide(active(labels), UpdateTopic(newLabels))
-    assert(events == Right(List(TopicLabelsUpdated(topicId, newLabels))))
+    val _ = assert(events == Right(List(TopicLabelsUpdated(topicId, newLabels))))
     assert(events.toOption.get.foldLeft(active(labels))((s, e) => Topic.evolve(s, e)).labels == newLabels)
   }
 
@@ -78,13 +78,13 @@ final class TopicSpec extends AnyFunSuite:
   }
 
   test("publish/update/delete on a deleted topic are rejected as not found") {
-    assert(Topic.decide(deleted, Publish(message)) == Left(Rejection.TopicNotFound))
-    assert(Topic.decide(deleted, UpdateTopic(labels)) == Left(Rejection.TopicNotFound))
+    val _ = assert(Topic.decide(deleted, Publish(message)) == Left(Rejection.TopicNotFound))
+    val _ = assert(Topic.decide(deleted, UpdateTopic(labels)) == Left(Rejection.TopicNotFound))
     assert(Topic.decide(deleted, DeleteTopic) == Left(Rejection.TopicNotFound))
   }
 
   test("delete/update on a non-existent topic are rejected") {
-    assert(Topic.decide(Topic.empty, DeleteTopic) == Left(Rejection.TopicNotFound))
+    val _ = assert(Topic.decide(Topic.empty, DeleteTopic) == Left(Rejection.TopicNotFound))
     assert(Topic.decide(Topic.empty, UpdateTopic(labels)) == Left(Rejection.TopicNotFound))
   }
 
@@ -102,7 +102,7 @@ final class TopicSpec extends AnyFunSuite:
 
   test("publishing a new idempotency key emits MessagePublished and records it in seen") {
     val m = keyed("m-1", Some("abc"), t0)
-    assert(Topic.decide(active(), Publish(m), window) == Right(List(MessagePublished(m))))
+    val _ = assert(Topic.decide(active(), Publish(m), window) == Right(List(MessagePublished(m))))
     val after = Topic.evolve(active(), MessagePublished(m), window)
     assert(after.seen.get("abc") == Some(SeenPublish(m.id, t0)))
   }
@@ -110,33 +110,33 @@ final class TopicSpec extends AnyFunSuite:
   test("a duplicate key within the window emits no event and duplicateOf returns the original id") {
     val original = MessageId.from("m-1").toOption.get
     val retry = keyed("m-2", Some("abc"), t0.plusSeconds(60)) // within 10m, different message id
-    assert(Topic.decide(seenAbc, Publish(retry), window) == Right(Nil))
+    val _ = assert(Topic.decide(seenAbc, Publish(retry), window) == Right(Nil))
     assert(Topic.duplicateOf(seenAbc, retry, window) == Some(original))
   }
 
   test("a key seen longer ago than the window is treated as a new publish") {
     val late = keyed("m-2", Some("abc"), t0.plusSeconds(11 * 60)) // 11m > 10m window
-    assert(Topic.decide(seenAbc, Publish(late), window) == Right(List(MessagePublished(late))))
+    val _ = assert(Topic.decide(seenAbc, Publish(late), window) == Right(List(MessagePublished(late))))
     assert(Topic.duplicateOf(seenAbc, late, window).isEmpty)
   }
 
   test("different idempotency keys publish independently") {
     val other = keyed("m-2", Some("def"), t0.plusSeconds(60))
-    assert(Topic.decide(seenAbc, Publish(other), window) == Right(List(MessagePublished(other))))
+    val _ = assert(Topic.decide(seenAbc, Publish(other), window) == Right(List(MessagePublished(other))))
     assert(Topic.duplicateOf(seenAbc, other, window).isEmpty)
   }
 
   test("a publish without an idempotency key is never deduplicated") {
     val noKey = keyed("m-2", None, t0.plusSeconds(60))
-    assert(Topic.decide(seenAbc, Publish(noKey), window) == Right(List(MessagePublished(noKey))))
+    val _ = assert(Topic.decide(seenAbc, Publish(noKey), window) == Right(List(MessagePublished(noKey))))
     assert(Topic.duplicateOf(seenAbc, noKey, window).isEmpty)
   }
 
   test("with dedup disabled (window 0) a repeated key still publishes and is not tracked") {
     val m = keyed("m-1", Some("abc"), t0)
-    assert(Topic.decide(active(), Publish(m), Duration.Zero) == Right(List(MessagePublished(m))))
+    val _ = assert(Topic.decide(active(), Publish(m), Duration.Zero) == Right(List(MessagePublished(m))))
     val after = Topic.evolve(active(), MessagePublished(m), Duration.Zero)
-    assert(after.seen.isEmpty)
+    val _ = assert(after.seen.isEmpty)
     assert(Topic.duplicateOf(active(), m, Duration.Zero).isEmpty)
   }
 

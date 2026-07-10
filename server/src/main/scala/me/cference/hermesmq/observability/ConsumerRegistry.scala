@@ -4,7 +4,8 @@ import me.cference.hermesmq.domain.SubscriptionId
 
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.duration.{Duration, FiniteDuration}
+import scala.concurrent.duration.Duration
+import scala.concurrent.duration.FiniteDuration
 
 /** In-memory, per-node registry of recently-seen named consumers per
   * subscription. Best-effort and ephemeral (never journaled): each consume call

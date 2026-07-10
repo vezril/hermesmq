@@ -1,16 +1,24 @@
 package me.cference.hermesmq.http
 
-import me.cference.hermesmq.auth.{Principal, TenantScope}
-import me.cference.hermesmq.domain.{Rejection, TopicCommand, TopicId}
-import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
+import me.cference.hermesmq.auth.Principal
+import me.cference.hermesmq.auth.TenantScope
+import me.cference.hermesmq.domain.Rejection
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.persistence.TopicSnapshot
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
-import org.apache.pekko.http.scaladsl.model.{StatusCode, StatusCodes}
+import org.apache.pekko.http.scaladsl.model.StatusCode
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
-import spray.json.{DefaultJsonProtocol, RootJsonFormat}
+import spray.json.DefaultJsonProtocol
+import spray.json.RootJsonFormat
 
 import scala.concurrent.Future
-import scala.util.{Failure, Success}
+import scala.util.Failure
+import scala.util.Success
 
 /** JSON request/response models for the topic admin API. */
 final case class CreateTopicRequest(topicId: String, labels: Option[Map[String, String]])

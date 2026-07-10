@@ -1,15 +1,22 @@
 package me.cference.hermesmq.client
 
-import me.cference.hermesmq.domain.{AckId, SubscriptionId, TopicId}
+import me.cference.hermesmq.domain.AckId
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.http.scaladsl.Http.ServerBinding
-import org.apache.pekko.http.scaladsl.model.{ContentTypes, HttpEntity, StatusCode, StatusCodes}
+import org.apache.pekko.http.scaladsl.model.ContentTypes
+import org.apache.pekko.http.scaladsl.model.HttpEntity
+import org.apache.pekko.http.scaladsl.model.StatusCode
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.time.{Millis, Seconds, Span}
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpecLike
 
 /** Tests the client's HTTP/JSON wiring against a self-contained stub server, so
@@ -116,8 +123,8 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
     }
     "pull messages with their ack ids and payloads" in {
       val msgs = client.pull(sid("s1"), 10).futureValue
-      msgs.map(_.ackId.value) shouldBe List("a1")
-      msgs.head.payload shouldBe "hello"
+      val _ = msgs.map(_.ackId.value) shouldBe List("a1")
+      val _ = msgs.head.payload shouldBe "hello"
       msgs.head.attributes shouldBe Map("k" -> "v")
     }
     "acknowledge messages (200 → success)" in {

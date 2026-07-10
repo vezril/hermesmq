@@ -32,8 +32,9 @@ final case class AuthKey(tenant: TenantId, salt: String, hash: String, scopes: S
 final class Authenticator(keys: List[AuthKey]):
 
   def authenticate(token: String): Option[Principal] =
-    if token == null || token.trim.isEmpty then None
-    else keys.collectFirst { case key if matches(key, token) => Principal(key.tenant, key.scopes) }
+    Option(token)
+      .filter(_.trim.nonEmpty)
+      .flatMap(t => keys.collectFirst { case key if matches(key, t) => Principal(key.tenant, key.scopes) })
 
   private def matches(key: AuthKey, token: String): Boolean =
     try MessageDigest.isEqual(Authenticator.digest(key.salt, token), Base64.getDecoder.decode(key.hash))

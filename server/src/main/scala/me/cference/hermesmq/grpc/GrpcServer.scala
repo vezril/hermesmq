@@ -2,12 +2,14 @@ package me.cference.hermesmq.grpc
 
 import me.cference.hermesmq.config.GrpcConfig
 import org.apache.pekko.Done
-import org.apache.pekko.actor.{ClassicActorSystemProvider, CoordinatedShutdown}
+import org.apache.pekko.actor.ClassicActorSystemProvider
+import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.grpc.scaladsl.ServiceHandler
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.http.scaladsl.Http.ServerBinding
-import org.apache.pekko.http.scaladsl.model.{HttpRequest, HttpResponse}
+import org.apache.pekko.http.scaladsl.model.HttpRequest
+import org.apache.pekko.http.scaladsl.model.HttpResponse
 import org.apache.pekko.http.scaladsl.settings.ServerSettings
 
 import scala.concurrent.Future

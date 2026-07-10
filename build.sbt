@@ -27,8 +27,14 @@ ThisBuild / scalacOptions ++= Seq(
   "-feature",
   "-unchecked",
   "-Werror",
-  "-Wunused:all"
+  "-Wunused:all",
+  "-Wvalue-discard",
+  "-Wnonunit-statement"
 )
+
+// SemanticDB so scalafix's semantic rules (OrganizeImports) can run and be
+// CI-gated via `scalafixAll --check`.
+ThisBuild / semanticdbEnabled := true
 
 lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "vezril")
 

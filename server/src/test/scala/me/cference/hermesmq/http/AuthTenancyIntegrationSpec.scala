@@ -3,10 +3,14 @@ package me.cference.hermesmq.http
 import me.cference.hermesmq.auth.*
 import me.cference.hermesmq.config.AuthConfig
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.observability.{InMemorySubscriptionStatsRepository, InMemoryTopicStatsRepository, ObservabilityRoutes}
+import me.cference.hermesmq.observability.InMemorySubscriptionStatsRepository
+import me.cference.hermesmq.observability.InMemoryTopicStatsRepository
+import me.cference.hermesmq.observability.ObservabilityRoutes
 import me.cference.hermesmq.persistence.*
+import org.apache.pekko.http.scaladsl.model.ContentTypes
+import org.apache.pekko.http.scaladsl.model.HttpEntity
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.model.headers.RawHeader
-import org.apache.pekko.http.scaladsl.model.{ContentTypes, HttpEntity, StatusCodes}
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.testkit.ScalatestRouteTest
@@ -39,7 +43,7 @@ final class AuthTenancyIntegrationSpec extends AnyWordSpec with Matchers with Sc
     def submit(id: TopicId, command: TopicCommand): Future[CommandReply] = command match
       case TopicCommand.CreateTopic(tid, labels) =>
         if store.contains(tid.value) then Future.successful(CommandReply.Rejected(Rejection.TopicAlreadyExists))
-        else { store.put(tid.value, labels); Future.successful(CommandReply.Accepted) }
+        else { val _ = store.put(tid.value, labels); Future.successful(CommandReply.Accepted) }
       case _ => Future.successful(CommandReply.Accepted)
     def query(id: TopicId): Future[Option[TopicSnapshot]] =
       Future.successful(store.get(id.value).map(l => TopicSnapshot(id, l)))
@@ -68,21 +72,21 @@ final class AuthTenancyIntegrationSpec extends AnyWordSpec with Matchers with Sc
       val r      = routes(topics)
 
       // Both tenants create "orders" with distinct labels.
-      Post("/v1/topics", json("""{"topicId":"orders","labels":{"team":"acme"}}""")).addHeader(as("acme-tok")) ~> r ~> check {
+      val _ = Post("/v1/topics", json("""{"topicId":"orders","labels":{"team":"acme"}}""")).addHeader(as("acme-tok")) ~> r ~> check {
         status shouldBe StatusCodes.Created
       }
-      Post("/v1/topics", json("""{"topicId":"orders","labels":{"team":"beta"}}""")).addHeader(as("beta-tok")) ~> r ~> check {
+      val _ = Post("/v1/topics", json("""{"topicId":"orders","labels":{"team":"beta"}}""")).addHeader(as("beta-tok")) ~> r ~> check {
         status shouldBe StatusCodes.Created
       }
 
       // Each reads back its own "orders" — isolated, external id shown.
-      Get("/v1/topics/orders").addHeader(as("acme-tok")) ~> r ~> check {
-        status shouldBe StatusCodes.OK
+      val _ = Get("/v1/topics/orders").addHeader(as("acme-tok")) ~> r ~> check {
+        val _ = status shouldBe StatusCodes.OK
         val o = responseAs[String].parseJson.asJsObject
-        o.fields("topicId").convertTo[String] shouldBe "orders"
+        val _ = o.fields("topicId").convertTo[String] shouldBe "orders"
         o.fields("labels").convertTo[Map[String, String]] shouldBe Map("team" -> "acme")
       }
-      Get("/v1/topics/orders").addHeader(as("beta-tok")) ~> r ~> check {
+      val _ = Get("/v1/topics/orders").addHeader(as("beta-tok")) ~> r ~> check {
         responseAs[String].parseJson.asJsObject.fields("labels").convertTo[Map[String, String]] shouldBe Map("team" -> "beta")
       }
 

@@ -1,9 +1,12 @@
 package me.cference.hermesmq.grpc
 
 import com.google.protobuf.ByteString
-import io.grpc.{Status, StatusRuntimeException}
-import me.cference.hermesmq.auth.{Authenticator, TenantScope}
-import me.cference.hermesmq.config.{AuthConfig, GrpcConfig}
+import io.grpc.Status
+import io.grpc.StatusRuntimeException
+import me.cference.hermesmq.auth.Authenticator
+import me.cference.hermesmq.auth.TenantScope
+import me.cference.hermesmq.config.AuthConfig
+import me.cference.hermesmq.config.GrpcConfig
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
@@ -13,7 +16,8 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.time.Instant
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 
 /** End-to-end gRPC over HTTP/2: binds the real handler on an ephemeral port and
@@ -71,9 +75,9 @@ final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWor
     pubsub = PubSubServiceClient(settings)(system)
 
   override protected def afterAll(): Unit =
-    if topics != null then topics.close()
-    if pubsub != null then pubsub.close()
-    if binding != null then Await.ready(binding.unbind(), 5.seconds)
+    Option(topics).foreach(_.close())
+    Option(pubsub).foreach(_.close())
+    Option(binding).foreach(b => Await.ready(b.unbind(), 5.seconds))
     super.afterAll()
 
   private def await[A](f: => Future[A]): A = Await.result(f, 10.seconds)
@@ -85,15 +89,15 @@ final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWor
 
   "The gRPC API over HTTP/2" should {
     "round-trip create topic → publish → subscribe → pull → ack via the generated client" in {
-      await(topics.createTopic(CreateTopicRequest(topicId = "orders", labels = Map("team" -> "pay"))))
+      val _ = await(topics.createTopic(CreateTopicRequest(topicId = "orders", labels = Map("team" -> "pay"))))
       val published = await(pubsub.publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"))))
-      published.messageId should not be empty
+      val _ = published.messageId should not be empty
 
-      await(pubsub.createSubscription(CreateSubscriptionRequest(subscriptionId = "s1", topicId = "orders")))
+      val _ = await(pubsub.createSubscription(CreateSubscriptionRequest(subscriptionId = "s1", topicId = "orders")))
 
       val pulled = await(pubsub.pull(PullRequest(subscriptionId = "s1", max = 10)))
-      pulled.messages.map(_.ackId) shouldBe Seq("ack-1")
-      pulled.messages.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
+      val _ = pulled.messages.map(_.ackId) shouldBe Seq("ack-1")
+      val _ = pulled.messages.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
 
       val acked = await(pubsub.ack(AckRequest(subscriptionId = "s1", ackIds = Seq("ack-1"))))
       acked.acknowledged shouldBe Seq("ack-1")
@@ -113,7 +117,7 @@ final class GrpcApiIntegrationSpec extends ScalaTestWithActorTestKit with AnyWor
         pubsub.streamMessages(StreamRequest(subscriptionId = "s1", max = 1)).take(2).runWith(org.apache.pekko.stream.scaladsl.Sink.seq),
         10.seconds
       )
-      got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
+      val _ = got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
       got.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
     }
 

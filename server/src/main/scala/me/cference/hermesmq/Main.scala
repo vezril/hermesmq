@@ -1,24 +1,64 @@
 package me.cference.hermesmq
 
 import com.typesafe.config.ConfigFactory
-import me.cference.hermesmq.cluster.{ClusterConfig, ShardedSubscriptionService, ShardedTopicService, SubscriptionSharding, TopicSharding}
-import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
-import me.cference.hermesmq.config.{AuthConfig, ConsumersConfig, DbConfig, DedupConfig, GrpcConfig, RedeliveryConfig, RetentionConfig, ServiceConfig, StreamConfig, TtlConfig}
-import me.cference.hermesmq.delivery.{DeadLetterProjection, DeliveryHandler, DeliveryProjection, ExpiringMessageProjection, JdbcExpiringMessageRepository, JdbcOutstandingLeaseRepository, JdbcTopicSubscriptionsRepository, LeaseProjection, RedeliverySweeper, SubscriptionIndexProjection, TtlSweeper}
-import me.cference.hermesmq.grpc.{GrpcServer, PubSubPowerApi, TopicAdminPowerApi}
-import me.cference.hermesmq.http.{Auth, HttpServer, PubSubRoutes, Readiness, TopicAdminRoutes}
-import me.cference.hermesmq.observability.{ConsumerRegistry, JdbcSubscriptionStatsRepository, JdbcTopicStatsRepository, ObservabilityRoutes, SubscriptionStatsProjection, TopicStatsProjection}
-import me.cference.hermesmq.persistence.{PersistenceHealth, SchemaMigrator}
+import me.cference.hermesmq.auth.Authenticator
+import me.cference.hermesmq.auth.TenantScope
+import me.cference.hermesmq.auth.TenantScopedSubscriptionService
+import me.cference.hermesmq.auth.TenantScopedTopicService
+import me.cference.hermesmq.cluster.ClusterConfig
+import me.cference.hermesmq.cluster.ShardedSubscriptionService
+import me.cference.hermesmq.cluster.ShardedTopicService
+import me.cference.hermesmq.cluster.SubscriptionSharding
+import me.cference.hermesmq.cluster.TopicSharding
+import me.cference.hermesmq.config.AuthConfig
+import me.cference.hermesmq.config.ConsumersConfig
+import me.cference.hermesmq.config.DbConfig
+import me.cference.hermesmq.config.DedupConfig
+import me.cference.hermesmq.config.GrpcConfig
+import me.cference.hermesmq.config.RedeliveryConfig
+import me.cference.hermesmq.config.RetentionConfig
+import me.cference.hermesmq.config.ServiceConfig
+import me.cference.hermesmq.config.StreamConfig
+import me.cference.hermesmq.config.TtlConfig
+import me.cference.hermesmq.delivery.DeadLetterProjection
+import me.cference.hermesmq.delivery.DeliveryHandler
+import me.cference.hermesmq.delivery.DeliveryProjection
+import me.cference.hermesmq.delivery.ExpiringMessageProjection
+import me.cference.hermesmq.delivery.JdbcExpiringMessageRepository
+import me.cference.hermesmq.delivery.JdbcOutstandingLeaseRepository
+import me.cference.hermesmq.delivery.JdbcTopicSubscriptionsRepository
+import me.cference.hermesmq.delivery.LeaseProjection
+import me.cference.hermesmq.delivery.RedeliverySweeper
+import me.cference.hermesmq.delivery.SubscriptionIndexProjection
+import me.cference.hermesmq.delivery.TtlSweeper
+import me.cference.hermesmq.grpc.GrpcServer
+import me.cference.hermesmq.grpc.PubSubPowerApi
+import me.cference.hermesmq.grpc.TopicAdminPowerApi
+import me.cference.hermesmq.http.Auth
+import me.cference.hermesmq.http.HttpServer
+import me.cference.hermesmq.http.PubSubRoutes
+import me.cference.hermesmq.http.Readiness
+import me.cference.hermesmq.http.TopicAdminRoutes
+import me.cference.hermesmq.observability.ConsumerRegistry
+import me.cference.hermesmq.observability.JdbcSubscriptionStatsRepository
+import me.cference.hermesmq.observability.JdbcTopicStatsRepository
+import me.cference.hermesmq.observability.ObservabilityRoutes
+import me.cference.hermesmq.observability.SubscriptionStatsProjection
+import me.cference.hermesmq.observability.TopicStatsProjection
+import me.cference.hermesmq.persistence.PersistenceHealth
+import me.cference.hermesmq.persistence.SchemaMigrator
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
-import org.apache.pekko.cluster.sharding.typed.scaladsl.{ClusterSharding, ShardedDaemonProcess}
+import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
+import org.apache.pekko.cluster.sharding.typed.scaladsl.ShardedDaemonProcess
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.projection.ProjectionBehavior
 import org.apache.pekko.util.Timeout
 
 import scala.concurrent.Await
 import scala.concurrent.duration.*
-import scala.util.{Failure, Success}
+import scala.util.Failure
+import scala.util.Success
 
 /** Entry point for the HermesMQ service.
   *
@@ -68,8 +108,8 @@ object Main:
 
           // Cluster Sharding: one writer per id across the cluster.
           val sharding = ClusterSharding(ctx.system)
-          TopicSharding.init(sharding, retentionConfig, dedupConfig)
-          SubscriptionSharding.init(sharding, retentionConfig)
+          val _ = TopicSharding.init(sharding, retentionConfig, dedupConfig)
+          val _ = SubscriptionSharding.init(sharding, retentionConfig)
           val topicService        = ShardedTopicService(sharding)
           val subscriptionService = ShardedSubscriptionService(sharding, redeliveryConfig.ackDeadline)
 
@@ -194,4 +234,4 @@ object Main:
         // Activate the cluster provider (the base config keeps the default so
         // tests don't cluster); the system name must match the seed addresses.
         val system = ActorSystem[Nothing](root, "hermesmq", ClusterConfig.activate(rawConfig))
-        Await.result(system.whenTerminated, Duration.Inf)
+        val _ = Await.result(system.whenTerminated, Duration.Inf)

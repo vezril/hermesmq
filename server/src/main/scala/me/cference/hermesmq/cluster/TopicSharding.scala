@@ -1,11 +1,16 @@
 package me.cference.hermesmq.cluster
 
-import me.cference.hermesmq.config.{DedupConfig, RetentionConfig}
+import me.cference.hermesmq.config.DedupConfig
+import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.domain.TopicId
-import me.cference.hermesmq.persistence.{TopicEntity, TopicEntityCommand}
+import me.cference.hermesmq.persistence.TopicEntity
+import me.cference.hermesmq.persistence.TopicEntityCommand
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.cluster.sharding.typed.ShardingEnvelope
-import org.apache.pekko.cluster.sharding.typed.scaladsl.{ClusterSharding, Entity, EntityRef, EntityTypeKey}
+import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
+import org.apache.pekko.cluster.sharding.typed.scaladsl.Entity
+import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityRef
+import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityTypeKey
 
 /** Cluster Sharding for Topic entities. Each topic id is a sharded entity, so
   * exactly one writer exists per id across the cluster. The entity keeps its

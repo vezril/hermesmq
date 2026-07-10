@@ -3,7 +3,8 @@ package me.cference.hermesmq.persistence
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.domain.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
-import org.apache.pekko.serialization.{SerializationExtension, Serializers}
+import org.apache.pekko.serialization.SerializationExtension
+import org.apache.pekko.serialization.Serializers
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
@@ -24,7 +25,8 @@ final class SnapshotSerializationSpec
     val serializer = serialization.findSerializerFor(obj)
     val manifest   = Serializers.manifestFor(serializer, obj)
     val bytes      = serialization.serialize(obj).get
-    serialization.deserialize(bytes, serializer.identifier, manifest).get.asInstanceOf[T]
+    // Erased generic round-trip type; a type pattern would be `unchecked` under -Werror.
+    serialization.deserialize(bytes, serializer.identifier, manifest).get.asInstanceOf[T] // scalafix:ok DisableSyntax.asInstanceOf
 
   private val topicId = TopicId.from("orders").toOption.get
   private val subId   = SubscriptionId.from("s1").toOption.get
@@ -82,7 +84,7 @@ final class SnapshotSerializationSpec
 
   "The snapshot serializer" should {
     "bind both state types to the explicit JSON serializer" in {
-      serialization.serializerFor(classOf[TopicState]).getClass shouldBe classOf[DomainEventSerializer]
+      val _ = serialization.serializerFor(classOf[TopicState]).getClass shouldBe classOf[DomainEventSerializer]
       serialization.serializerFor(classOf[SubscriptionState]).getClass shouldBe classOf[DomainEventSerializer]
     }
     "leave Java serialization disabled (an unbound Serializable is refused)" in {

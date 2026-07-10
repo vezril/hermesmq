@@ -3,7 +3,8 @@ package me.cference.hermesmq.persistence
 import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.domain.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
-import org.apache.pekko.serialization.{SerializationExtension, Serializers}
+import org.apache.pekko.serialization.SerializationExtension
+import org.apache.pekko.serialization.Serializers
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
@@ -24,7 +25,8 @@ final class EventSerializationSpec
     val serializer = serialization.findSerializerFor(obj)
     val manifest   = Serializers.manifestFor(serializer, obj)
     val bytes      = serialization.serialize(obj).get
-    serialization.deserialize(bytes, serializer.identifier, manifest).get.asInstanceOf[T]
+    // Erased generic round-trip type; a type pattern would be `unchecked` under -Werror.
+    serialization.deserialize(bytes, serializer.identifier, manifest).get.asInstanceOf[T] // scalafix:ok DisableSyntax.asInstanceOf
 
   private val topicId  = TopicId.from("orders").toOption.get
   private val subId    = SubscriptionId.from("sub-1").toOption.get
@@ -70,7 +72,7 @@ final class EventSerializationSpec
     "omit idempotencyKey when absent and read a legacy message (no key) as None" in {
       import JsonFormats.given
       import spray.json.*
-      message.toJson.asJsObject.fields.contains("idempotencyKey") shouldBe false
+      val _ = message.toJson.asJsObject.fields.contains("idempotencyKey") shouldBe false
       """{"id":"m-1","payload":"aGk=","attributes":{},"publishTime":"2026-07-07T00:00:00Z"}""".parseJson
         .convertTo[Message]
         .idempotencyKey shouldBe None
@@ -110,15 +112,19 @@ final class EventSerializationSpec
     "round-trip a MessageDelivered whose message carries an expireTime" in {
       val ttlMsg = Message.from(msgId, "hi".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z"), expireTime = Some(deadline)).toOption.get
       val e      = SubscriptionEvent.MessageDelivered(ackId, ttlMsg)
-      val out    = roundTrip[SubscriptionEvent](e)
-      out shouldBe e
-      out.asInstanceOf[SubscriptionEvent.MessageDelivered].message.expireTime shouldBe Some(deadline)
+      val out = roundTrip[SubscriptionEvent](e)
+      val _ = out shouldBe e
+      out match
+        case d: SubscriptionEvent.MessageDelivered => d.message.expireTime shouldBe Some(deadline)
+        case other                                 => fail(s"expected MessageDelivered, got $other")
     }
     "deserialize a message with no expireTime field to no expiry" in {
       import JsonFormats.given
       import spray.json.*
       val json = """{"type":"MessageDelivered","ackId":"ack-1","message":{"id":"m-1","payload":"aGk=","attributes":{},"publishTime":"2026-07-07T00:00:00Z"}}"""
-      val ev   = json.parseJson.convertTo[SubscriptionEvent].asInstanceOf[SubscriptionEvent.MessageDelivered]
+      val ev = json.parseJson.convertTo[SubscriptionEvent] match
+        case d: SubscriptionEvent.MessageDelivered => d
+        case other                                 => fail(s"expected MessageDelivered, got $other")
       ev.message.expireTime shouldBe None
     }
   }

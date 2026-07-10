@@ -68,53 +68,53 @@ final class TopicEntitySpec
   "TopicEntity" should {
     "persist TopicCreated with labels and reply Accepted on create" in {
       val r = submit(CreateTopic(topicId, labels))
-      r.reply shouldBe CommandReply.Accepted
+      val _ = r.reply shouldBe CommandReply.Accepted
       r.event shouldBe TopicCreated(topicId, labels)
     }
 
     "persist MessagePublished when publishing to an existing topic" in {
-      submit(CreateTopic(topicId))
+      val _ = submit(CreateTopic(topicId))
       val r = submit(Publish(message))
-      r.reply shouldBe CommandReply.Published(message.id, deduplicated = false)
+      val _ = r.reply shouldBe CommandReply.Published(message.id, deduplicated = false)
       r.event shouldBe MessagePublished(message)
     }
 
     "reply Published(newId, deduplicated=false) and persist a fresh keyed publish" in {
-      dedupSubmit(CreateTopic(dedupTopicId))
+      val _ = dedupSubmit(CreateTopic(dedupTopicId))
       val m = keyed("k-1", "abc", t0)
       val r = dedupSubmit(Publish(m))
-      r.reply shouldBe CommandReply.Published(m.id, deduplicated = false)
+      val _ = r.reply shouldBe CommandReply.Published(m.id, deduplicated = false)
       r.event shouldBe MessagePublished(m)
     }
 
     "reply Published(originalId, deduplicated=true) and persist nothing on a retry within the window" in {
-      dedupSubmit(CreateTopic(dedupTopicId))
+      val _ = dedupSubmit(CreateTopic(dedupTopicId))
       val first = keyed("k-1", "abc", t0)
-      dedupSubmit(Publish(first))
+      val _ = dedupSubmit(Publish(first))
       val retry = keyed("k-2", "abc", t0.plusSeconds(60)) // within the 1h window
       val r     = dedupSubmit(Publish(retry))
-      r.reply shouldBe CommandReply.Published(first.id, deduplicated = true)
+      val _ = r.reply shouldBe CommandReply.Published(first.id, deduplicated = true)
       r.hasNoEvents shouldBe true
     }
 
     "persist TopicDeleted on delete" in {
-      submit(CreateTopic(topicId))
+      val _ = submit(CreateTopic(topicId))
       val r = submit(DeleteTopic)
-      r.reply shouldBe CommandReply.Accepted
+      val _ = r.reply shouldBe CommandReply.Accepted
       r.event shouldBe TopicDeleted(topicId)
     }
 
     "persist TopicLabelsUpdated on update" in {
-      submit(CreateTopic(topicId))
+      val _ = submit(CreateTopic(topicId))
       val r = submit(UpdateTopic(labels))
-      r.reply shouldBe CommandReply.Accepted
+      val _ = r.reply shouldBe CommandReply.Accepted
       r.event shouldBe TopicLabelsUpdated(topicId, labels)
     }
 
     "reply to a query with the current snapshot without persisting" in {
-      submit(CreateTopic(topicId, labels))
+      val _ = submit(CreateTopic(topicId, labels))
       val r = get()
-      r.reply shouldBe Some(TopicSnapshot(topicId, labels))
+      val _ = r.reply shouldBe Some(TopicSnapshot(topicId, labels))
       r.hasNoEvents shouldBe true
     }
 
@@ -123,21 +123,21 @@ final class TopicEntitySpec
     }
 
     "reply None to a query for a deleted topic" in {
-      submit(CreateTopic(topicId))
-      submit(DeleteTopic)
+      val _ = submit(CreateTopic(topicId))
+      val _ = submit(DeleteTopic)
       get().reply shouldBe None
     }
 
     "reply Rejected and persist nothing when creating an existing topic" in {
-      submit(CreateTopic(topicId))
+      val _ = submit(CreateTopic(topicId))
       val r = submit(CreateTopic(topicId))
-      r.reply shouldBe CommandReply.Rejected(Rejection.TopicAlreadyExists)
+      val _ = r.reply shouldBe CommandReply.Rejected(Rejection.TopicAlreadyExists)
       r.hasNoEvents shouldBe true
     }
 
     "reply Rejected and persist nothing when deleting a non-existent topic" in {
       val r = submit(DeleteTopic)
-      r.reply shouldBe CommandReply.Rejected(Rejection.TopicNotFound)
+      val _ = r.reply shouldBe CommandReply.Rejected(Rejection.TopicNotFound)
       r.hasNoEvents shouldBe true
     }
   }

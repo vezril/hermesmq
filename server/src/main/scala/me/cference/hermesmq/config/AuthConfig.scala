@@ -1,7 +1,9 @@
 package me.cference.hermesmq.config
 
-import com.typesafe.config.{Config, ConfigException}
-import me.cference.hermesmq.auth.{AuthKey, TenantId}
+import com.typesafe.config.Config
+import com.typesafe.config.ConfigException
+import me.cference.hermesmq.auth.AuthKey
+import me.cference.hermesmq.auth.TenantId
 
 import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal

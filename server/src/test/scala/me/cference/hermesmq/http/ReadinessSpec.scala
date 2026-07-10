@@ -27,7 +27,7 @@ final class ReadinessSpec extends AnyFunSuite:
   test("not ready after unbind (drain)") {
     val r = Readiness(persistenceHealthy = () => true)
     r.markBound()
-    assert(r.isReady)
+    val _ = assert(r.isReady)
     r.markUnbound()
     assert(!r.isReady)
   }

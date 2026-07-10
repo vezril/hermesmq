@@ -39,7 +39,7 @@ final class RetentionDeletionSpec
     )
 
   private def send(kit: EventSourcedBehaviorTestKit[SubscriptionEntityCommand, SubscriptionEvent, SubscriptionState], cmd: SubscriptionCommand): Unit =
-    kit.runCommand[CommandReply](replyTo => SubscriptionEntityCommand.Submit(cmd, replyTo))
+    val _ = kit.runCommand[CommandReply](replyTo => SubscriptionEntityCommand.Submit(cmd, replyTo))
 
   "Journal retention" should {
     "delete events older than the retained snapshot window while recovery stays correct" in {
@@ -53,7 +53,7 @@ final class RetentionDeletionSpec
       val before = kit.getState()
 
       // Old events have been purged: fewer events remain in the journal than were persisted.
-      persistence.persistedInStorage(persistenceId).size should be < (total + 1)
+      val _ = persistence.persistedInStorage(persistenceId).size should be < (total + 1)
 
       // Recovery from the retained snapshot + surviving events still yields the same state.
       kit.restart().state shouldBe before
@@ -72,7 +72,7 @@ final class RetentionDeletionSpec
       }
 
       val restored = kit.restart().state
-      restored.outstanding shouldBe empty
+      val _ = restored.outstanding shouldBe empty
       // Journal bounded well below the ~17 events that were persisted over the lifetime.
       persistence.persistedInStorage(persistenceId).size should be < (2 * n + 1)
     }

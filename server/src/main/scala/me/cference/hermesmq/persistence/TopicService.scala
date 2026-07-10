@@ -1,6 +1,7 @@
 package me.cference.hermesmq.persistence
 
-import me.cference.hermesmq.domain.{TopicCommand, TopicId}
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
 
 import scala.concurrent.Future
 

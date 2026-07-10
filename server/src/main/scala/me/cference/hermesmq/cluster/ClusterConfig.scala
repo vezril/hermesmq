@@ -1,6 +1,8 @@
 package me.cference.hermesmq.cluster
 
-import com.typesafe.config.{Config, ConfigFactory, ConfigValueFactory}
+import com.typesafe.config.Config
+import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigValueFactory
 
 import scala.jdk.CollectionConverters.*
 

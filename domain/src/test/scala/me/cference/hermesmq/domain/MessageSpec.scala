@@ -13,9 +13,9 @@ final class MessageSpec extends AnyFunSuite:
 
   test("a message carries its id, payload, attributes and publish time") {
     val msg = Message.from(id, "hello".getBytes, Map("k" -> "v"), now).toOption.get
-    assert(msg.id == id)
-    assert(msg.payload == "hello".getBytes.toVector)
-    assert(msg.attributes == Map("k" -> "v"))
+    val _ = assert(msg.id == id)
+    val _ = assert(msg.payload == "hello".getBytes.toVector)
+    val _ = assert(msg.attributes == Map("k" -> "v"))
     assert(msg.publishTime == now)
   }
 
@@ -40,17 +40,17 @@ final class MessageSpec extends AnyFunSuite:
 
   test("a message has no expireTime by default and is never expired") {
     val msg = Message.from(id, "x".getBytes, Map.empty, now).toOption.get
-    assert(msg.expireTime.isEmpty)
+    val _ = assert(msg.expireTime.isEmpty)
     assert(!msg.expired(now.plusSeconds(10_000)))
   }
 
   test("a message with an expireTime is expired at or after that instant") {
     val expireAt = now.plusSeconds(60)
     val msg = Message.from(id, "x".getBytes, Map.empty, now, expireTime = Some(expireAt)).toOption.get
-    assert(msg.expireTime == Some(expireAt))
-    assert(!msg.expired(now))                    // before
-    assert(!msg.expired(expireAt.minusSeconds(1)))
-    assert(msg.expired(expireAt))                // at
+    val _ = assert(msg.expireTime == Some(expireAt))
+    val _ = assert(!msg.expired(now))                    // before
+    val _ = assert(!msg.expired(expireAt.minusSeconds(1)))
+    val _ = assert(msg.expired(expireAt))                // at
     assert(msg.expired(expireAt.plusSeconds(1))) // after
   }
 

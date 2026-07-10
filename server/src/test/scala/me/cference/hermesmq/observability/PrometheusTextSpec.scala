@@ -1,6 +1,7 @@
 package me.cference.hermesmq.observability
 
-import me.cference.hermesmq.domain.{SubscriptionId, TopicId}
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -21,12 +22,12 @@ final class PrometheusTextSpec extends AnyWordSpec with Matchers:
         topics = List(TopicStats(TopicId.from("orders").toOption.get, publishedTotal = 5, deleted = false)),
         now = now
       )
-      out should include("# TYPE hermesmq_subscription_backlog gauge")
-      out should include("""hermesmq_subscription_backlog{subscription="s1"} 2""")
-      out should include("""hermesmq_subscription_oldest_unacked_age_seconds{subscription="s1"} 90""")
-      out should include("# TYPE hermesmq_messages_published_total counter")
-      out should include("""hermesmq_messages_published_total{topic="orders"} 5""")
-      out should include("""hermesmq_messages_redelivered_total{subscription="s1"} 3""")
+      val _ = out should include("# TYPE hermesmq_subscription_backlog gauge")
+      val _ = out should include("""hermesmq_subscription_backlog{subscription="s1"} 2""")
+      val _ = out should include("""hermesmq_subscription_oldest_unacked_age_seconds{subscription="s1"} 90""")
+      val _ = out should include("# TYPE hermesmq_messages_published_total counter")
+      val _ = out should include("""hermesmq_messages_published_total{topic="orders"} 5""")
+      val _ = out should include("""hermesmq_messages_redelivered_total{subscription="s1"} 3""")
       out should include("""hermesmq_messages_dead_lettered_total{subscription="s1"} 1""")
     }
 
@@ -37,10 +38,10 @@ final class PrometheusTextSpec extends AnyWordSpec with Matchers:
 
     "produce a valid, sample-free exposition when there is no data" in {
       val out = PrometheusText.render(Nil, Nil, now)
-      out should include("# TYPE hermesmq_subscription_backlog gauge")
-      out should include("# TYPE hermesmq_messages_published_total counter")
-      out should include("# TYPE hermesmq_subscription_consumers gauge")
-      out should not include "hermesmq_subscription_backlog{"
+      val _ = out should include("# TYPE hermesmq_subscription_backlog gauge")
+      val _ = out should include("# TYPE hermesmq_messages_published_total counter")
+      val _ = out should include("# TYPE hermesmq_subscription_consumers gauge")
+      val _ = out should not include "hermesmq_subscription_backlog{"
       out should not include "hermesmq_subscription_consumers{"
     }
 
@@ -51,7 +52,7 @@ final class PrometheusTextSpec extends AnyWordSpec with Matchers:
         now,
         consumerCounts = Map(SubscriptionId.from("s1").toOption.get -> 2)
       )
-      out should include("# TYPE hermesmq_subscription_consumers gauge")
+      val _ = out should include("# TYPE hermesmq_subscription_consumers gauge")
       out should include("""hermesmq_subscription_consumers{subscription="s1"} 2""")
     }
   }

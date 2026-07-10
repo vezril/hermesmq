@@ -1,7 +1,9 @@
 package me.cference.hermesmq.delivery
 
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService}
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.PulledMessage
+import me.cference.hermesmq.persistence.SubscriptionService
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
@@ -39,7 +41,7 @@ final class DeliveryHandlerSpec extends AnyFunSuite with Matchers with ScalaFutu
     handler.deliver(tid("orders"), message).futureValue
 
     val ids = service.calls.map(_._1).toSet
-    ids shouldBe Set(sid("s1"), sid("s2"))
+    val _ = ids shouldBe Set(sid("s1"), sid("s2"))
     service.calls.foreach { case (subId, cmd) =>
       cmd shouldBe SubscriptionCommand.RecordDelivery(DeliveryHandler.ackIdFor(subId, message.id), message)
     }
@@ -53,6 +55,6 @@ final class DeliveryHandlerSpec extends AnyFunSuite with Matchers with ScalaFutu
   }
 
   test("uses a deterministic ackId per (subscription, message) so replays are idempotent") {
-    DeliveryHandler.ackIdFor(sid("s1"), message.id) shouldBe DeliveryHandler.ackIdFor(sid("s1"), message.id)
+    val _ = DeliveryHandler.ackIdFor(sid("s1"), message.id) shouldBe DeliveryHandler.ackIdFor(sid("s1"), message.id)
     DeliveryHandler.ackIdFor(sid("s1"), message.id) should not be DeliveryHandler.ackIdFor(sid("s2"), message.id)
   }

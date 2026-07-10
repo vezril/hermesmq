@@ -2,7 +2,8 @@ package me.cference.hermesmq.persistence
 
 import me.cference.hermesmq.config.DbConfig
 
-import java.sql.{Connection, DriverManager}
+import java.sql.Connection
+import java.sql.DriverManager
 import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
@@ -25,8 +26,8 @@ object SchemaMigrator:
 
   /** The bundled schema DDL, read from the classpath (the exact file in the jar). */
   def schemaDdl: String =
-    val stream = getClass.getResourceAsStream(SchemaResource)
-    if stream == null then throw new IllegalStateException(s"schema resource '$SchemaResource' not found on the classpath")
+    val stream = Option(getClass.getResourceAsStream(SchemaResource))
+      .getOrElse(sys.error(s"schema resource '$SchemaResource' not found on the classpath"))
     try scala.io.Source.fromInputStream(stream, "UTF-8").mkString
     finally stream.close()
 

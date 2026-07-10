@@ -49,6 +49,10 @@ jobs:
       - name: Compile
         run: sbt -v compile
 
+      # Lint gate: scalafix rules (DisableSyntax, OrganizeImports) must pass.
+      - name: Scalafix check
+        run: sbt "scalafixAll --check"
+
       - name: Test
         run: sbt -v test
 
@@ -121,3 +125,41 @@ jobs:
         run: sbt -v server/Docker/publish
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+
+  # Statement coverage (scoverage) — reported, not gated (no floor yet), and in
+  # its own non-required job so it never blocks a merge on an immature suite.
+  coverage:
+    name: Coverage report
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.LEXICON_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout (full history for sbt-dynver)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up JDK 21 (Temurin) with sbt cache
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+      - name: Coverage
+        run: sbt -v clean coverage test coverageAggregate
+
+  # Secret scan over the repo and its history. Separate job so a scan hiccup
+  # can't fail the compile gate.
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

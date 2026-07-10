@@ -5,17 +5,19 @@ import io.grpc.Status
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.persistence.*
-import org.slf4j.MDC
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
-import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.Sink
+import org.apache.pekko.stream.scaladsl.Source
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
+import org.slf4j.MDC
 
 import java.time.Instant
 import java.util.concurrent.ConcurrentLinkedQueue
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -77,7 +79,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
             case TopicCommand.Publish(m) => published = Some(m); Future.successful(CommandReply.Published(m.id, deduplicated = false))
             case _                       => Future.successful(CommandReply.Accepted)
         def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
-      await(PubSubGrpcService(capturing, subs()).publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), ttlSeconds = 60)))
+      val _ = await(PubSubGrpcService(capturing, subs()).publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), ttlSeconds = 60)))
       published.flatMap(_.expireTime).isDefined shouldBe true
     }
   }
@@ -87,7 +89,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       val subsvc = CapturingSubs(Some(List(PulledMessage(ackId, message))))
       val in     = Source(List(start("s1", 1), ackReq("ack-1")))
       val got    = Await.result(PubSubGrpcService(topics(), subsvc).consume(in).take(2).runWith(Sink.seq), 3.seconds)
-      got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
+      val _ = got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
       eventually(timeout(3.seconds))(subsvc.acked.asScala should contain("ack-1"))
     }
 
@@ -116,7 +118,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
         svc.streamMessages(StreamRequest(subscriptionId = "s1", max = 1)).take(2).runWith(org.apache.pekko.stream.scaladsl.Sink.seq),
         3.seconds
       )
-      got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
+      val _ = got.map(_.ackId) shouldBe Seq("ack-1", "ack-1")
       got.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
     }
 
@@ -130,7 +132,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
   "PubSubGrpcService" should {
     "publish a message and return a non-empty messageId" in {
       val resp = await(service().publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"))))
-      resp.messageId should not be empty
+      val _ = resp.messageId should not be empty
       resp.deduplicated shouldBe false
     }
 
@@ -142,7 +144,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
             case TopicCommand.Publish(m) => published = Some(m); Future.successful(CommandReply.Published(m.id, deduplicated = false))
             case _                       => Future.successful(CommandReply.Accepted)
         def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
-      await(PubSubGrpcService(capturing, subs()).publish(
+      val _ = await(PubSubGrpcService(capturing, subs()).publish(
         PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), idempotencyKey = "abc")
       ))
       published.flatMap(_.idempotencyKey) shouldBe Some("abc")
@@ -154,7 +156,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       val resp = await(svc.publish(
         PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), idempotencyKey = "abc")
       ))
-      resp.messageId shouldBe "orig-1"
+      val _ = resp.messageId shouldBe "orig-1"
       resp.deduplicated shouldBe true
     }
 
@@ -170,7 +172,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
     }
 
     "create a subscription" in {
-      await(service().createSubscription(CreateSubscriptionRequest(subscriptionId = "s1", topicId = "orders")))
+      val _ = await(service().createSubscription(CreateSubscriptionRequest(subscriptionId = "s1", topicId = "orders")))
       succeed
     }
 
@@ -183,22 +185,22 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
     "pull leased messages with their ackIds" in {
       val svc  = service(s = subs(pullReply = Some(List(PulledMessage(ackId, message)))))
       val resp = await(svc.pull(PullRequest(subscriptionId = "s1", max = 10)))
-      resp.messages.map(_.ackId) shouldBe Seq("ack-1")
-      resp.messages.head.message.map(_.messageId) shouldBe Some("m-1")
+      val _ = resp.messages.map(_.ackId) shouldBe Seq("ack-1")
+      val _ = resp.messages.head.message.map(_.messageId) shouldBe Some("m-1")
       resp.messages.head.message.map(_.payload.toStringUtf8) shouldBe Some("hello")
     }
 
     "record a named consumer as active on pull" in {
       val reg = ConsumerRegistry(1.minute)
       val svc = PubSubGrpcService(topics(), subs(), consumers = reg)
-      await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "worker-3")))
+      val _ = await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "worker-3")))
       reg.activeCount(SubscriptionId.from("orders").toOption.get, Instant.now()) shouldBe 1
     }
 
     "not record a consumer when the id is empty (anonymous pull)" in {
       val reg = ConsumerRegistry(1.minute)
       val svc = PubSubGrpcService(topics(), subs(), consumers = reg)
-      await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "")))
+      val _ = await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "")))
       reg.activeCount(SubscriptionId.from("orders").toOption.get, Instant.now()) shouldBe 0
     }
 
@@ -210,16 +212,16 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
     }
 
     "set the consumer MDC during a pull and clear it afterwards" in {
-      @volatile var during: String = null
+      @volatile var during: Option[String] = None
       val capturing = new SubscriptionService:
         def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] = Future.successful(CommandReply.Accepted)
         def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] =
-          during = MDC.get("consumer")
+          during = Option(MDC.get("consumer"))
           Future.successful(Some(Nil))
       val svc = PubSubGrpcService(topics(), capturing, consumers = ConsumerRegistry(1.minute))
-      await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "worker-3")))
-      during shouldBe "worker-3"
-      MDC.get("consumer") shouldBe null
+      val _ = await(svc.pull(PullRequest(subscriptionId = "orders", max = 1, consumerId = "worker-3")))
+      val _ = during shouldBe Some("worker-3")
+      Option(MDC.get("consumer")) shouldBe None
     }
 
     "map pull of a missing subscription to NOT_FOUND" in {
@@ -229,7 +231,7 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
 
     "acknowledge ids and report them acknowledged" in {
       val resp = await(service().ack(AckRequest(subscriptionId = "s1", ackIds = Seq("ack-1"))))
-      resp.acknowledged shouldBe Seq("ack-1")
+      val _ = resp.acknowledged shouldBe Seq("ack-1")
       resp.unknown shouldBe empty
     }
 

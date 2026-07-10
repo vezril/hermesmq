@@ -3,7 +3,8 @@ package me.cference.hermesmq.delivery
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.SubscriptionService
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 /** Fans a published message out to every subscription on its topic by issuing
   * `RecordDelivery` to each. Subscriptions are looked up from the durable,

@@ -1,14 +1,19 @@
 package me.cference.hermesmq.cluster
 
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, TopicEntityCommand, TopicSnapshot}
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicEntityCommand
+import me.cference.hermesmq.persistence.TopicSnapshot
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.cluster.MemberStatus
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
-import org.apache.pekko.cluster.typed.{Cluster, Join}
+import org.apache.pekko.cluster.typed.Cluster
+import org.apache.pekko.cluster.typed.Join
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.time.{Millis, Seconds, Span}
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpecLike
 
 /** Verifies Topic entities are sharded and reachable via `EntityRef` in a
@@ -27,11 +32,11 @@ final class TopicShardingSpec
   cluster.manager ! Join(cluster.selfMember.address)
 
   private val sharding = ClusterSharding(system)
-  TopicSharding.init(sharding)
+  val _ = TopicSharding.init(sharding)
 
   override protected def beforeAll(): Unit =
     super.beforeAll()
-    eventually { cluster.selfMember.status shouldBe MemberStatus.Up }
+    val _ = eventually { cluster.selfMember.status shouldBe MemberStatus.Up }
 
   private def tid(s: String) = TopicId.from(s).toOption.get
 
@@ -42,7 +47,7 @@ final class TopicShardingSpec
       val probe = createTestProbe[CommandReply]()
 
       ref ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(id), probe.ref)
-      probe.expectMessage(CommandReply.Accepted)
+      val _ = probe.expectMessage(CommandReply.Accepted)
 
       // A second command for the same id reaches the same entity → rejected.
       ref ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(id), probe.ref)
@@ -52,7 +57,7 @@ final class TopicShardingSpec
     "isolate different topic ids" in {
       val probe = createTestProbe[CommandReply]()
       TopicSharding.entityRef(sharding, tid("alpha")) ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(tid("alpha")), probe.ref)
-      probe.expectMessage(CommandReply.Accepted)
+      val _ = probe.expectMessage(CommandReply.Accepted)
       TopicSharding.entityRef(sharding, tid("beta")) ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(tid("beta")), probe.ref)
       probe.expectMessage(CommandReply.Accepted)
     }
@@ -68,7 +73,7 @@ final class TopicShardingSpec
       val ref   = TopicSharding.entityRef(sharding, id)
       val ack   = createTestProbe[CommandReply]()
       ref ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(id, Map("k" -> "v")), ack.ref)
-      ack.expectMessage(CommandReply.Accepted)
+      val _ = ack.expectMessage(CommandReply.Accepted)
 
       val query = createTestProbe[Option[TopicSnapshot]]()
       ref ! TopicEntityCommand.Query(query.ref)

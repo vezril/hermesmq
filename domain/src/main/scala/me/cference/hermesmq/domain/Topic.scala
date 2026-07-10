@@ -1,7 +1,8 @@
 package me.cference.hermesmq.domain
 
 import java.time.Instant
-import scala.concurrent.duration.{Duration, FiniteDuration}
+import scala.concurrent.duration.Duration
+import scala.concurrent.duration.FiniteDuration
 
 /** Commands accepted by the Topic aggregate's write side. */
 enum TopicCommand:
