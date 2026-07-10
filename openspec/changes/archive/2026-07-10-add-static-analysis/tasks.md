@@ -22,5 +22,5 @@
 
 ## 5. Verify & docs
 
-- [ ] 5.1 Run the full build locally (`sbt clean scalafixAll --check test`) and confirm green with all new flags/gates; open the PR and confirm CI (compile+test, coverage, scalafix, gitleaks) is green
+- [x] 5.1 Run the full build locally (`sbt clean scalafixAll --check test`) and confirm green with all new flags/gates; open the PR and confirm CI (compile+test, coverage, scalafix, gitleaks) is green
 - [x] 5.2 Document the added static-analysis gates in the README (coverage report, scalafix check, stricter warnings, gitleaks/Dependabot/Trivy) so contributors know what CI enforces
