@@ -2,6 +2,7 @@ package me.cference.hermesmq.http
 
 import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.TtlConfig
+import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService, TopicService}
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -26,7 +27,7 @@ final case class PublishRequest(
 )
 final case class PublishResponse(messageId: String, deduplicated: Boolean = false)
 final case class CreateSubscriptionRequest(subscriptionId: String, topicId: String)
-final case class PullRequest(max: Option[Int])
+final case class PullRequest(max: Option[Int], consumerId: Option[String] = None)
 final case class PulledMessageJson(ackId: String, payload: String, attributes: Map[String, String], publishTime: String)
 final case class PullResponse(messages: List[PulledMessageJson])
 final case class AckRequest(ackIds: List[String])
@@ -38,7 +39,7 @@ object PubSubJson extends DefaultJsonProtocol:
   given RootJsonFormat[PublishRequest]            = jsonFormat4(PublishRequest.apply)
   given RootJsonFormat[PublishResponse]           = jsonFormat2(PublishResponse.apply)
   given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat2(CreateSubscriptionRequest.apply)
-  given RootJsonFormat[PullRequest]               = jsonFormat1(PullRequest.apply)
+  given RootJsonFormat[PullRequest]               = jsonFormat2(PullRequest.apply)
   given RootJsonFormat[PulledMessageJson]         = jsonFormat4(PulledMessageJson.apply)
   given RootJsonFormat[PullResponse]              = jsonFormat1(PullResponse.apply)
   given RootJsonFormat[AckRequest]                = jsonFormat1(AckRequest.apply)
@@ -54,7 +55,8 @@ object PubSubJson extends DefaultJsonProtocol:
 final class PubSubRoutes(
     topics: TopicService,
     subscriptions: SubscriptionService,
-    ttlConfig: TtlConfig = TtlConfig.Default
+    ttlConfig: TtlConfig = TtlConfig.Default,
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
 )(using ExecutionContext):
   import PubSubJson.given
   import SprayJsonSupport.*
@@ -110,6 +112,7 @@ final class PubSubRoutes(
             post {
               entity(as[PullRequest]) { req =>
                 withSubId(rawSub) { sid =>
+                  consumers.touch(sid, req.consumerId.getOrElse(""), Instant.now())
                   onComplete(subscriptions.pull(sid, req.max.getOrElse(DefaultPullMax))) {
                     case Success(Some(msgs)) => complete(PullResponse(msgs.map(toJson)))
                     case Success(None)       => complete(StatusCodes.NotFound)
@@ -232,6 +235,9 @@ final class PubSubRoutes(
       }
 
 object PubSubRoutes:
-  def apply(topics: TopicService, subscriptions: SubscriptionService, ttlConfig: TtlConfig = TtlConfig.Default)(using
-      ExecutionContext
-  ): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig)
+  def apply(
+      topics: TopicService,
+      subscriptions: SubscriptionService,
+      ttlConfig: TtlConfig = TtlConfig.Default,
+      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
+  )(using ExecutionContext): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig, consumers)

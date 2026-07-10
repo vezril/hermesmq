@@ -156,6 +156,14 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
           status shouldBe StatusCodes.NotFound
         }
     }
+    "record a named consumer as active on pull" in {
+      val reg = me.cference.hermesmq.observability.ConsumerRegistry(1.minute)
+      Post("/v1/subscriptions/s1/pull", json("""{"max":10,"consumerId":"worker-3"}""")) ~>
+        Route.seal(PubSubRoutes(topicStub(), subStub(), consumers = reg).routes) ~> check {
+          status shouldBe StatusCodes.OK
+          reg.activeCount(SubscriptionId.from("s1").toOption.get, Instant.now()) shouldBe 1
+        }
+    }
   }
 
   "POST /v1/subscriptions/{id}/ack" should {

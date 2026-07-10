@@ -4,6 +4,8 @@ import com.google.protobuf.ByteString
 import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.{StreamConfig, TtlConfig}
 import me.cference.hermesmq.domain.*
+import me.cference.hermesmq.observability.ConsumerRegistry
+import org.slf4j.MDC
 import me.cference.hermesmq.grpc.{Message as ProtoMessage, PulledMessage as ProtoPulledMessage}
 import me.cference.hermesmq.persistence.{CommandReply, PulledMessage as DomainPulledMessage, SubscriptionService, TopicService}
 import org.apache.pekko.NotUsed
@@ -24,7 +26,8 @@ final class PubSubGrpcService(
     topics: TopicService,
     subscriptions: SubscriptionService,
     streamConfig: StreamConfig = StreamConfig.Default,
-    ttlConfig: TtlConfig = TtlConfig.Default
+    ttlConfig: TtlConfig = TtlConfig.Default,
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
 )(using ExecutionContext, ActorSystem)
     extends PubSubService:
 
@@ -55,9 +58,12 @@ final class PubSubGrpcService(
 
   def pull(in: PullRequest): Future[PullResponse] =
     withSubId(in.subscriptionId) { sid =>
-      subscriptions.pull(sid, in.max).map {
-        case Some(messages) => PullResponse(messages = messages.map(toProto))
-        case None           => throw GrpcErrors.rejected(Rejection.SubscriptionNotFound)
+      touchConsumer(sid, in.consumerId)
+      withConsumerMdc(in.consumerId) {
+        subscriptions.pull(sid, in.max).map {
+          case Some(messages) => PullResponse(messages = messages.map(toProto))
+          case None           => throw GrpcErrors.rejected(Rejection.SubscriptionNotFound)
+        }
       }
     }
 
@@ -66,12 +72,15 @@ final class PubSubGrpcService(
       case Left(err) => Source.failed(GrpcErrors.invalid(err))
       case Right(sid) =>
         val batch = if in.max > 0 then in.max else streamConfig.batchSize
+        touchConsumer(sid, in.consumerId)
         // Probe existence first: an unknown subscription fails the stream NOT_FOUND;
         // otherwise stream leased messages, mapping each to proto.
         val futureSource = subscriptions.pull(sid, 0).map {
           case None => Source.failed[ProtoPulledMessage](GrpcErrors.rejected(Rejection.SubscriptionNotFound))
           case Some(_) =>
-            MessageStream.leased[DomainPulledMessage](_ => subscriptions.pull(sid, batch), batch, streamConfig.pollInterval).map(toProto)
+            MessageStream
+              .leased[DomainPulledMessage](_ => { touchConsumer(sid, in.consumerId); subscriptions.pull(sid, batch) }, batch, streamConfig.pollInterval)
+              .map(toProto)
         }
         Source.futureSource(futureSource).mapMaterializedValue(_ => NotUsed)
 
@@ -85,6 +94,7 @@ final class PubSubGrpcService(
               case Left(err) => Source.failed(GrpcErrors.invalid(err))
               case Right(sid) =>
                 val batch = if start.max > 0 then start.max else streamConfig.batchSize
+                touchConsumer(sid, start.consumerId)
                 val futureSource = subscriptions.pull(sid, 0).map {
                   case None => Source.failed[ProtoPulledMessage](GrpcErrors.rejected(Rejection.SubscriptionNotFound))
                   case Some(_) =>
@@ -92,7 +102,9 @@ final class PubSubGrpcService(
                     // not stalled by slow outbound demand; the client cancelling the call
                     // cancels this inbound and stops it.
                     tail.mapConcat(_.kind.ack.toList).mapAsync(PubSubGrpcService.AckParallelism)(a => ackAll(sid, a.ackIds)).runWith(Sink.ignore)
-                    MessageStream.leased[DomainPulledMessage](_ => subscriptions.pull(sid, batch), batch, streamConfig.pollInterval).map(toProto)
+                    MessageStream
+                      .leased[DomainPulledMessage](_ => { touchConsumer(sid, start.consumerId); subscriptions.pull(sid, batch) }, batch, streamConfig.pollInterval)
+                      .map(toProto)
                 }
                 Source.futureSource(futureSource)
       case _ => Source.empty // client opened the stream but sent nothing
@@ -124,6 +136,21 @@ final class PubSubGrpcService(
         (applied, unknown) => ModifyAckDeadlineResponse(modified = applied, unknown = unknown)
       }
     }
+
+  /** Record a named consumer's activity (no-op for an empty id or a disabled registry). */
+  private def touchConsumer(sid: SubscriptionId, consumerId: String): Unit =
+    consumers.touch(sid, consumerId, Instant.now())
+
+  /** Tag the calling scope with the consumer id in the logging MDC so log lines
+    * emitted while handling the request carry a top-level `consumer` field, then
+    * clear it. Best-effort: reliably covers the synchronous handler scope.
+    */
+  private def withConsumerMdc[A](consumerId: String)(body: => Future[A]): Future[A] =
+    if consumerId.isEmpty then body
+    else
+      MDC.put("consumer", consumerId)
+      try body
+      finally MDC.remove("consumer")
 
   /** Parse a subscription id (blank/invalid → INVALID_ARGUMENT) then run `f`. */
   private def withSubId[A](raw: String)(f: SubscriptionId => Future[A]): Future[A] =

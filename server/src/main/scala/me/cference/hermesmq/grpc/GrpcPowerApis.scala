@@ -2,6 +2,7 @@ package me.cference.hermesmq.grpc
 
 import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
 import me.cference.hermesmq.config.{AuthConfig, StreamConfig, TtlConfig}
+import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.persistence.{SubscriptionService, TopicService}
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.ActorSystem
@@ -47,7 +48,8 @@ final class PubSubPowerApi(
     scope: TenantScope,
     config: AuthConfig,
     streamConfig: StreamConfig = StreamConfig.Default,
-    ttlConfig: TtlConfig = TtlConfig.Default
+    ttlConfig: TtlConfig = TtlConfig.Default,
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
 )(using ExecutionContext, ActorSystem)
     extends PubSubServicePowerApi:
 
@@ -77,7 +79,8 @@ final class PubSubPowerApi(
       new TenantScopedTopicService(baseTopics, scope, p.tenant),
       new TenantScopedSubscriptionService(baseSubs, scope, p.tenant),
       streamConfig,
-      ttlConfig
+      ttlConfig,
+      consumers
     )
 
   private def authed[A](metadata: Metadata)(f: PubSubGrpcService => Future[A]): Future[A] =

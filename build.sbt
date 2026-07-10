@@ -41,7 +41,7 @@ lazy val scalaTestVersion       = "3.2.19"
 // pinned exactly so a mismatch is a build error. This must be the-lexicon release
 // that first ships `lexicon-hermes-grpc` (its add-hermes-grpc-contract, expected
 // v0.4.0). Verified locally against the byte-identical publishLocal stubs.
-lazy val lexiconVersion         = "0.5.0"
+lazy val lexiconVersion         = "0.6.0"
 lazy val logbackVersion         = "1.5.16"
 lazy val logstashLogbackVersion = "8.0"
 lazy val sprayJsonVersion       = "1.3.6"
