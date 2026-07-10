@@ -4,12 +4,15 @@ import me.cference.hermesmq.config.ServiceConfig
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.http.scaladsl.Http
-import org.apache.pekko.http.scaladsl.model.{HttpRequest, StatusCodes}
+import org.apache.pekko.http.scaladsl.model.HttpRequest
+import org.apache.pekko.http.scaladsl.model.StatusCodes
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.time.{Millis, Seconds, Span}
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
-import org.scalatest.BeforeAndAfterAll
 
 import java.net.ServerSocket
 import scala.concurrent.Await
@@ -28,7 +31,7 @@ final class HttpServerSpec extends AnyWordSpec with Matchers with ScalaFutures w
 
   override def afterAll(): Unit =
     system.terminate()
-    Await.result(system.whenTerminated, 10.seconds)
+    val _ = Await.result(system.whenTerminated, 10.seconds)
 
   "HttpServer.start" should {
     "bind on an ephemeral port, mark ready, serve /health, then release the port on unbind" in {
@@ -38,15 +41,15 @@ final class HttpServerSpec extends AnyWordSpec with Matchers with ScalaFutures w
         .futureValue
 
       val port = binding.localAddress.getPort
-      readiness.isReady shouldBe true
+      val _ = readiness.isReady shouldBe true
 
       val response = Http()(system)
         .singleRequest(HttpRequest(uri = s"http://127.0.0.1:$port/health"))
         .futureValue
-      response.status shouldBe StatusCodes.OK
-      response.discardEntityBytes(system)
+      val _ = response.status shouldBe StatusCodes.OK
+      val _ = response.discardEntityBytes(system)
 
-      binding.unbind().futureValue
+      val _ = binding.unbind().futureValue
 
       // Port is released: a plain server socket can now bind it.
       val socket = new ServerSocket(port)
@@ -64,10 +67,10 @@ final class HttpServerSpec extends AnyWordSpec with Matchers with ScalaFutures w
         val secondReady = Readiness(persistenceHealthy = () => true)
         val result =
           HttpServer.start(system, ServiceConfig("127.0.0.1", busyPort), version = "boot-test", readiness = secondReady)
-        whenReady(result.failed) { ex =>
+        val _ = whenReady(result.failed) { ex =>
           ex shouldBe a[Throwable]
         }
         secondReady.isReady shouldBe false
-      finally first.unbind().futureValue
+      finally { val _ = first.unbind().futureValue }
     }
   }

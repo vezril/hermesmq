@@ -1,7 +1,8 @@
 package me.cference.hermesmq.observability
 
 import me.cference.hermesmq.domain.*
-import org.apache.pekko.http.scaladsl.model.{ContentTypes, StatusCodes}
+import org.apache.pekko.http.scaladsl.model.ContentTypes
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.testkit.ScalatestRouteTest
 import org.scalatest.matchers.should.Matchers
@@ -36,12 +37,12 @@ final class ObservabilityRoutesSpec extends AnyWordSpec with Matchers with Scala
     "return Prometheus text with the expected samples" in {
       val (s, t) = populated()
       Get("/metrics") ~> routes(s, t) ~> check {
-        status shouldBe StatusCodes.OK
-        contentType shouldBe ContentTypes.`text/plain(UTF-8)`
+        val _ = status shouldBe StatusCodes.OK
+        val _ = contentType shouldBe ContentTypes.`text/plain(UTF-8)`
         val body = responseAs[String]
-        body should include("""hermesmq_subscription_backlog{subscription="s1"} 1""")
-        body should include("""hermesmq_subscription_oldest_unacked_age_seconds{subscription="s1"} 90""")
-        body should include("""hermesmq_messages_published_total{topic="orders"} 1""")
+        val _ = body should include("""hermesmq_subscription_backlog{subscription="s1"} 1""")
+        val _ = body should include("""hermesmq_subscription_oldest_unacked_age_seconds{subscription="s1"} 90""")
+        val _ = body should include("""hermesmq_messages_published_total{topic="orders"} 1""")
         body should include("""hermesmq_messages_redelivered_total{subscription="s1"} 1""")
       }
     }
@@ -51,12 +52,14 @@ final class ObservabilityRoutesSpec extends AnyWordSpec with Matchers with Scala
     "list subscriptions with their stats" in {
       val (s, t) = populated()
       Get("/v1/subscriptions") ~> routes(s, t) ~> check {
-        status shouldBe StatusCodes.OK
-        val arr = responseAs[String].parseJson.asInstanceOf[JsArray]
-        val o   = arr.elements.head.asJsObject
-        o.fields("subscriptionId").convertTo[String] shouldBe "s1"
-        o.fields("backlog").convertTo[Int] shouldBe 1
-        o.fields("oldestUnackedAgeSeconds").convertTo[Long] shouldBe 90
+        val _ = status shouldBe StatusCodes.OK
+        val arr = responseAs[String].parseJson match
+          case a: JsArray => a
+          case other      => fail(s"expected JsArray, got $other")
+        val o = arr.elements.head.asJsObject
+        val _ = o.fields("subscriptionId").convertTo[String] shouldBe "s1"
+        val _ = o.fields("backlog").convertTo[Int] shouldBe 1
+        val _ = o.fields("oldestUnackedAgeSeconds").convertTo[Long] shouldBe 90
         o.fields("redeliveredTotal").convertTo[Long] shouldBe 1
       }
     }
@@ -66,9 +69,12 @@ final class ObservabilityRoutesSpec extends AnyWordSpec with Matchers with Scala
     "list topics with their published counts" in {
       val (s, t) = populated()
       Get("/v1/topics") ~> routes(s, t) ~> check {
-        status shouldBe StatusCodes.OK
-        val o = responseAs[String].parseJson.asInstanceOf[JsArray].elements.head.asJsObject
-        o.fields("topicId").convertTo[String] shouldBe "orders"
+        val _ = status shouldBe StatusCodes.OK
+        val arr = responseAs[String].parseJson match
+          case a: JsArray => a
+          case other      => fail(s"expected JsArray, got $other")
+        val o = arr.elements.head.asJsObject
+        val _ = o.fields("topicId").convertTo[String] shouldBe "orders"
         o.fields("publishedTotal").convertTo[Long] shouldBe 1
       }
     }
@@ -78,12 +84,12 @@ final class ObservabilityRoutesSpec extends AnyWordSpec with Matchers with Scala
     "return an empty array, not an error" in {
       val s = InMemorySubscriptionStatsRepository()
       val t = InMemoryTopicStatsRepository()
-      Get("/v1/subscriptions") ~> routes(s, t) ~> check {
-        status shouldBe StatusCodes.OK
+      val _ = Get("/v1/subscriptions") ~> routes(s, t) ~> check {
+        val _ = status shouldBe StatusCodes.OK
         responseAs[String].parseJson shouldBe JsArray()
       }
       Get("/v1/topics") ~> routes(s, t) ~> check {
-        status shouldBe StatusCodes.OK
+        val _ = status shouldBe StatusCodes.OK
         responseAs[String].parseJson shouldBe JsArray()
       }
     }

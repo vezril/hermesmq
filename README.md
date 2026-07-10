@@ -82,6 +82,23 @@ boot/shutdown test (`HttpServerSpec`), and config parsing tests
 (`ServiceConfigSpec`). Actor systems are shut down after each suite, so no
 dispatcher threads are left running.
 
+## Static analysis
+
+CI enforces several gates beyond compile + test:
+
+| Gate | What it does | Failing? |
+|------|--------------|----------|
+| `-Werror -Wunused:all -Wvalue-discard -Wnonunit-statement` | Strict Scala 3 compiler warnings as errors — no unused symbols, no silently-discarded non-Unit values or statements | Build fails |
+| `scalafixAll --check` | Lint rules: `DisableSyntax` (no `throw`/`null`/`while`/`asInstanceOf` — encode errors in return types, use `Option`, iterate with `Iterator`/recursion) and `OrganizeImports` (one import per line, sorted) | CI fails |
+| scoverage | Statement-coverage report (`sbt coverage test coverageAggregate`) — **reported, not gated** (no floor yet) | No (advisory) |
+| gitleaks | Scans the repo + history for committed secrets | CI fails on a finding |
+| Dependabot | Weekly update/CVE PRs for the `sbt` and `github-actions` ecosystems | — |
+| Trivy | Scans the released Docker image for CVEs (`ignore-unfixed`, fails on `CRITICAL`) | Release fails |
+
+Run the compiler/lint gates locally with `sbt clean "scalafixAll --check" test`.
+A deliberate `asInstanceOf` (e.g. an erased generic round-trip in a test) is
+allowed only with a justified `// scalafix:ok DisableSyntax.asInstanceOf`.
+
 ## Run the service
 
 ```bash

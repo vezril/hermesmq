@@ -1,9 +1,13 @@
 package me.cference.hermesmq.auth
 
-import me.cference.hermesmq.domain.{SubscriptionCommand, SubscriptionId, TopicCommand, TopicId}
+import me.cference.hermesmq.domain.SubscriptionCommand
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
 import me.cference.hermesmq.persistence.*
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 /** A [[TopicService]] that transparently qualifies every id by tenant, so a
   * tenant's calls only ever touch its own entities/read models. Ids embedded in

@@ -1,18 +1,23 @@
 package me.cference.hermesmq.grpc
 
 import io.grpc.Status
-import me.cference.hermesmq.auth.{AuthKey, Authenticator, TenantId, TenantScope}
+import me.cference.hermesmq.auth.AuthKey
+import me.cference.hermesmq.auth.Authenticator
+import me.cference.hermesmq.auth.TenantId
+import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.AuthConfig
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
-import org.apache.pekko.grpc.scaladsl.{Metadata, MetadataBuilder}
+import org.apache.pekko.grpc.scaladsl.Metadata
+import org.apache.pekko.grpc.scaladsl.MetadataBuilder
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.util.Base64
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 
 /** Tests gRPC authentication + authorization via call metadata on the power APIs. */
@@ -50,7 +55,7 @@ final class GrpcAuthSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike 
 
   "gRPC authentication" should {
     "allow an admin token to create a topic" in {
-      Await.result(topicApi.createTopic(CreateTopicRequest(topicId = "orders"), bearer(adminTok)), 3.seconds)
+      val _ = Await.result(topicApi.createTopic(CreateTopicRequest(topicId = "orders"), bearer(adminTok)), 3.seconds)
       succeed
     }
 
@@ -67,7 +72,7 @@ final class GrpcAuthSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike 
     }
 
     "allow a non-admin token to pull (data-plane)" in {
-      Await.result(pubApi.pull(PullRequest(subscriptionId = "s1", max = 10), bearer(dataTok)), 3.seconds)
+      val _ = Await.result(pubApi.pull(PullRequest(subscriptionId = "s1", max = 10), bearer(dataTok)), 3.seconds)
       succeed
     }
 

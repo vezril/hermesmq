@@ -1,19 +1,24 @@
 package me.cference.hermesmq.delivery
 
 import me.cference.hermesmq.config.DbConfig
-import me.cference.hermesmq.domain.{SubscriptionEvent, SubscriptionId, TopicId}
-import me.cference.hermesmq.persistence.{SubscriptionEntity, TopicService}
+import me.cference.hermesmq.domain.SubscriptionEvent
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
+import me.cference.hermesmq.persistence.SubscriptionEntity
+import me.cference.hermesmq.persistence.TopicService
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.jdbc.query.scaladsl.JdbcReadJournal
 import org.apache.pekko.persistence.query.Offset
 import org.apache.pekko.projection.ProjectionId
 import org.apache.pekko.projection.eventsourced.EventEnvelope
 import org.apache.pekko.projection.eventsourced.scaladsl.EventSourcedProvider
-import org.apache.pekko.projection.jdbc.scaladsl.{JdbcHandler, JdbcProjection}
+import org.apache.pekko.projection.jdbc.scaladsl.JdbcHandler
+import org.apache.pekko.projection.jdbc.scaladsl.JdbcProjection
 import org.apache.pekko.projection.scaladsl.SourceProvider
 import org.slf4j.LoggerFactory
 
-import scala.concurrent.{Await, ExecutionContext}
+import scala.concurrent.Await
+import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.*
 
 /** Pekko Projection that reacts to dead-lettered messages by republishing them

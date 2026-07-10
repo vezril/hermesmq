@@ -37,7 +37,7 @@ final class SubscriptionSnapshotSpec
     )
 
   private def send(kit: EventSourcedBehaviorTestKit[SubscriptionEntityCommand, SubscriptionEvent, SubscriptionState], cmd: SubscriptionCommand): Unit =
-    kit.runCommand[CommandReply](replyTo => SubscriptionEntityCommand.Submit(cmd, replyTo))
+    val _ = kit.runCommand[CommandReply](replyTo => SubscriptionEntityCommand.Submit(cmd, replyTo))
 
   "SubscriptionEntity snapshots" should {
     "persist a snapshot after the configured number of events" in {
@@ -72,7 +72,7 @@ final class SubscriptionSnapshotSpec
       val before = kit.getState()
 
       val restored = kit.restart().state
-      restored shouldBe before
+      val _ = restored shouldBe before
       restored.outstanding.contains(ack(1)) shouldBe true
     }
   }

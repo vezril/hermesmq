@@ -11,8 +11,8 @@ final class AuthConfigSpec extends AnyFunSuite:
 
   test("defaults: auth disabled, default tenant present, no keys") {
     val cfg = load().toOption.get
-    assert(!cfg.enabled)
-    assert(cfg.defaultTenant.value == "default")
+    val _ = assert(!cfg.enabled)
+    val _ = assert(cfg.defaultTenant.value == "default")
     assert(cfg.keys.isEmpty)
   }
 
@@ -21,11 +21,11 @@ final class AuthConfigSpec extends AnyFunSuite:
                      |  enabled = true
                      |  keys = [ { tenant = "acme", salt = "c2FsdA==", hash = "aGFzaA==", scopes = ["admin"] } ]
                      |}""".stripMargin).toOption.get
-    assert(cfg.enabled)
-    assert(cfg.keys.size == 1)
+    val _ = assert(cfg.enabled)
+    val _ = assert(cfg.keys.size == 1)
     val k = cfg.keys.head
-    assert(k.tenant.value == "acme")
-    assert(k.salt == "c2FsdA==" && k.hash == "aGFzaA==")
+    val _ = assert(k.tenant.value == "acme")
+    val _ = assert(k.salt == "c2FsdA==" && k.hash == "aGFzaA==")
     assert(k.scopes == Set("admin"))
   }
 

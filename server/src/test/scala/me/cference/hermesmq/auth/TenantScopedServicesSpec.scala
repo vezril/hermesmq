@@ -1,13 +1,16 @@
 package me.cference.hermesmq.auth
 
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.persistence.TopicSnapshot
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
 import java.util.concurrent.ConcurrentLinkedQueue
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -33,16 +36,16 @@ final class TenantScopedServicesSpec extends AnyWordSpec with Matchers:
   "TenantScopedTopicService" should {
     "qualify the entity id and the CreateTopic command's embedded id by tenant" in {
       val rec = RecordingTopics()
-      await(TenantScopedTopicService(rec, scope, acme).submit(topic("orders"), TopicCommand.CreateTopic(topic("orders"), Map.empty)))
+      val _ = await(TenantScopedTopicService(rec, scope, acme).submit(topic("orders"), TopicCommand.CreateTopic(topic("orders"), Map.empty)))
       val (entityId, cmd) = rec.submitted.asScala.head
-      entityId shouldBe "acme~orders"
+      val _ = entityId shouldBe "acme~orders"
       cmd shouldBe TopicCommand.CreateTopic(topic("acme~orders"), Map.empty)
     }
 
     "isolate two tenants using the same external id" in {
       val rec = RecordingTopics()
-      await(TenantScopedTopicService(rec, scope, acme).submit(topic("orders"), TopicCommand.DeleteTopic))
-      await(TenantScopedTopicService(rec, scope, beta).submit(topic("orders"), TopicCommand.DeleteTopic))
+      val _ = await(TenantScopedTopicService(rec, scope, acme).submit(topic("orders"), TopicCommand.DeleteTopic))
+      val _ = await(TenantScopedTopicService(rec, scope, beta).submit(topic("orders"), TopicCommand.DeleteTopic))
       rec.submitted.asScala.map(_._1).toSet shouldBe Set("acme~orders", "beta~orders")
     }
 
@@ -54,7 +57,7 @@ final class TenantScopedServicesSpec extends AnyWordSpec with Matchers:
 
     "leave the default tenant's ids unqualified" in {
       val rec = RecordingTopics()
-      await(TenantScopedTopicService(rec, scope, TenantScope.DefaultTenant).submit(topic("orders"), TopicCommand.DeleteTopic))
+      val _ = await(TenantScopedTopicService(rec, scope, TenantScope.DefaultTenant).submit(topic("orders"), TopicCommand.DeleteTopic))
       rec.submitted.asScala.head._1 shouldBe "orders"
     }
   }

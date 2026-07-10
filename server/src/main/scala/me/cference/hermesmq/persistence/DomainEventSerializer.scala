@@ -1,6 +1,9 @@
 package me.cference.hermesmq.persistence
 
-import me.cference.hermesmq.domain.{SubscriptionEvent, SubscriptionState, TopicEvent, TopicState}
+import me.cference.hermesmq.domain.SubscriptionEvent
+import me.cference.hermesmq.domain.SubscriptionState
+import me.cference.hermesmq.domain.TopicEvent
+import me.cference.hermesmq.domain.TopicState
 import org.apache.pekko.serialization.SerializerWithStringManifest
 import spray.json.*
 
@@ -27,14 +30,14 @@ final class DomainEventSerializer extends SerializerWithStringManifest:
     case _: SubscriptionEvent => SubscriptionManifest
     case _: TopicState        => TopicStateManifest
     case _: SubscriptionState => SubscriptionStateManifest
-    case other                => throw IllegalArgumentException(s"Cannot serialize ${other.getClass.getName}")
+    case other                => sys.error(s"Cannot serialize ${other.getClass.getName}")
 
   override def toBinary(o: AnyRef): Array[Byte] = o match
     case e: TopicEvent        => e.toJson.compactPrint.getBytes(UTF_8)
     case e: SubscriptionEvent => e.toJson.compactPrint.getBytes(UTF_8)
     case s: TopicState        => s.toJson.compactPrint.getBytes(UTF_8)
     case s: SubscriptionState => s.toJson.compactPrint.getBytes(UTF_8)
-    case other                => throw IllegalArgumentException(s"Cannot serialize ${other.getClass.getName}")
+    case other                => sys.error(s"Cannot serialize ${other.getClass.getName}")
 
   override def fromBinary(bytes: Array[Byte], manifest: String): AnyRef =
     val json = new String(bytes, UTF_8).parseJson
@@ -43,4 +46,4 @@ final class DomainEventSerializer extends SerializerWithStringManifest:
       case SubscriptionManifest      => json.convertTo[SubscriptionEvent]
       case TopicStateManifest        => json.convertTo[TopicState]
       case SubscriptionStateManifest => json.convertTo[SubscriptionState]
-      case other                     => throw IllegalArgumentException(s"Unknown manifest: $other")
+      case other                     => sys.error(s"Unknown manifest: $other")

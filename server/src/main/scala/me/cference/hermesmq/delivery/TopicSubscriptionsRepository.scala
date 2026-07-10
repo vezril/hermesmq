@@ -1,11 +1,15 @@
 package me.cference.hermesmq.delivery
 
 import me.cference.hermesmq.config.DbConfig
-import me.cference.hermesmq.domain.{SubscriptionId, TopicId}
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
 
-import java.sql.{Connection, DriverManager}
+import java.sql.Connection
+import java.sql.DriverManager
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.{ExecutionContext, Future, blocking}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
+import scala.concurrent.blocking
 
 /** The durable, cluster-shared topic→subscriptions read model. Reads are used by
   * delivery fan-out; writes are applied by the subscription-index projection.
@@ -51,10 +55,8 @@ final class JdbcTopicSubscriptionsRepository(dbConfig: DbConfig)(using Execution
         withConnection { conn =>
           val ps = conn.prepareStatement("SELECT subscription_id FROM topic_subscriptions WHERE topic_id = ?")
           ps.setString(1, topicId.value)
-          val rs      = ps.executeQuery()
-          val builder = Set.newBuilder[SubscriptionId]
-          while rs.next() do SubscriptionId.from(rs.getString(1)).toOption.foreach(builder += _)
-          builder.result()
+          val rs = ps.executeQuery()
+          Iterator.continually(rs).takeWhile(_.next()).flatMap(r => SubscriptionId.from(r.getString(1)).toOption).toSet
         }
       }
     }

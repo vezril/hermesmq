@@ -19,7 +19,7 @@ final class RetentionConfigSpec extends AnyFunSuite:
   }
 
   test("a non-positive snapshot interval fails fast") {
-    assert(load("hermesmq.retention.snapshot-every-events = 0").isLeft)
+    val _ = assert(load("hermesmq.retention.snapshot-every-events = 0").isLeft)
     assert(load("hermesmq.retention.snapshot-every-events = -1").isLeft)
   }
 

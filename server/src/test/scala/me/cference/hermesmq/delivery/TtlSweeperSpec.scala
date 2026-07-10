@@ -1,14 +1,17 @@
 package me.cference.hermesmq.delivery
 
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService}
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.PulledMessage
+import me.cference.hermesmq.persistence.SubscriptionService
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
 import java.time.Instant
 import java.util.concurrent.ConcurrentLinkedQueue
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 

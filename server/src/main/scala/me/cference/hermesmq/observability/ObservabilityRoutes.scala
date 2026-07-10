@@ -1,14 +1,17 @@
 package me.cference.hermesmq.observability
 
-import me.cference.hermesmq.auth.{Principal, TenantScope}
+import me.cference.hermesmq.auth.Principal
+import me.cference.hermesmq.auth.TenantScope
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
-import org.apache.pekko.http.scaladsl.model.{ContentTypes, HttpEntity}
+import org.apache.pekko.http.scaladsl.model.ContentTypes
+import org.apache.pekko.http.scaladsl.model.HttpEntity
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
 import spray.json.*
 
 import java.time.Instant
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 /** JSON views for the admin listing endpoints. */
 final case class SubscriptionStatsJson(

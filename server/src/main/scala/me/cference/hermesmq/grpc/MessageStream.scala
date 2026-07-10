@@ -5,7 +5,8 @@ import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.pattern.after
 import org.apache.pekko.stream.scaladsl.Source
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
 
 /** Turns a leasing `pull` into a demand-driven, backpressured stream. Because

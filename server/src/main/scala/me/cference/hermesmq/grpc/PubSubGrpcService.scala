@@ -2,20 +2,27 @@ package me.cference.hermesmq.grpc
 
 import com.google.protobuf.ByteString
 import me.cference.hermesmq.auth.TenantScope
-import me.cference.hermesmq.config.{StreamConfig, TtlConfig}
+import me.cference.hermesmq.config.StreamConfig
+import me.cference.hermesmq.config.TtlConfig
 import me.cference.hermesmq.domain.*
+import me.cference.hermesmq.grpc.Message as ProtoMessage
+import me.cference.hermesmq.grpc.PulledMessage as ProtoPulledMessage
 import me.cference.hermesmq.observability.ConsumerRegistry
-import org.slf4j.MDC
-import me.cference.hermesmq.grpc.{Message as ProtoMessage, PulledMessage as ProtoPulledMessage}
-import me.cference.hermesmq.persistence.{CommandReply, PulledMessage as DomainPulledMessage, SubscriptionService, TopicService}
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.PulledMessage as DomainPulledMessage
+import me.cference.hermesmq.persistence.SubscriptionService
+import me.cference.hermesmq.persistence.TopicService
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.ActorSystem
-import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.Sink
+import org.apache.pekko.stream.scaladsl.Source
+import org.slf4j.MDC
 
 import java.time.Instant
 import java.util.UUID
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.concurrent.duration.*
-import scala.concurrent.{ExecutionContext, Future}
 
 /** gRPC handler for publishing and consuming. Implements the generated
   * [[PubSubService]] trait by delegating to the same topic/subscription services
@@ -34,11 +41,11 @@ final class PubSubGrpcService(
   def publish(in: PublishRequest): Future[PublishResponse] =
     (TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from), buildMessage(in)) match
       case (Right(topicId), Right(message)) =>
-        topics.submit(topicId, TopicCommand.Publish(message)).map {
+        topics.submit(topicId, TopicCommand.Publish(message)).flatMap {
           case CommandReply.Published(mid, deduplicated) =>
-            PublishResponse(messageId = mid.value, deduplicated = deduplicated)
-          case CommandReply.Rejected(rejection) => throw GrpcErrors.rejected(rejection)
-          case CommandReply.Accepted            => throw new IllegalStateException("Publish returned Accepted; expected Published")
+            Future.successful(PublishResponse(messageId = mid.value, deduplicated = deduplicated))
+          case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
+          case CommandReply.Accepted            => Future.failed(new IllegalStateException("Publish returned Accepted; expected Published"))
         }
       case (Left(err), _) => Future.failed(GrpcErrors.invalid(err))
       case (_, Left(err)) => Future.failed(GrpcErrors.invalid(err))
@@ -49,10 +56,10 @@ final class PubSubGrpcService(
       TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from)
     ) match
       case (Right(sid), Right(tid)) =>
-        subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid)).map {
-          case CommandReply.Accepted            => CreateSubscriptionResponse()
-          case CommandReply.Rejected(rejection) => throw GrpcErrors.rejected(rejection)
-          case CommandReply.Published(_, _)     => throw new IllegalStateException("unexpected Published reply for CreateSubscription")
+        subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid)).flatMap {
+          case CommandReply.Accepted            => Future.successful(CreateSubscriptionResponse())
+          case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
+          case CommandReply.Published(_, _)     => Future.failed(new IllegalStateException("unexpected Published reply for CreateSubscription"))
         }
       case _ => Future.failed(GrpcErrors.invalid(ValidationError("invalid subscriptionId or topicId")))
 
@@ -60,9 +67,9 @@ final class PubSubGrpcService(
     withSubId(in.subscriptionId) { sid =>
       touchConsumer(sid, in.consumerId)
       withConsumerMdc(in.consumerId) {
-        subscriptions.pull(sid, in.max).map {
-          case Some(messages) => PullResponse(messages = messages.map(toProto))
-          case None           => throw GrpcErrors.rejected(Rejection.SubscriptionNotFound)
+        subscriptions.pull(sid, in.max).flatMap {
+          case Some(messages) => Future.successful(PullResponse(messages = messages.map(toProto)))
+          case None           => Future.failed(GrpcErrors.rejected(Rejection.SubscriptionNotFound))
         }
       }
     }
@@ -101,7 +108,7 @@ final class PubSubGrpcService(
                     // Drain inbound acks on an INDEPENDENT stream so acknowledgement is
                     // not stalled by slow outbound demand; the client cancelling the call
                     // cancels this inbound and stops it.
-                    tail.mapConcat(_.kind.ack.toList).mapAsync(PubSubGrpcService.AckParallelism)(a => ackAll(sid, a.ackIds)).runWith(Sink.ignore)
+                    val _ = tail.mapConcat(_.kind.ack.toList).mapAsync(PubSubGrpcService.AckParallelism)(a => ackAll(sid, a.ackIds)).runWith(Sink.ignore)
                     MessageStream
                       .leased[DomainPulledMessage](_ => { touchConsumer(sid, start.consumerId); subscriptions.pull(sid, batch) }, batch, streamConfig.pollInterval)
                       .map(toProto)
