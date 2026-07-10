@@ -8,5 +8,5 @@
 
 ## 3. Verify
 
-- [ ] 3.1 Open the PR and confirm the `Compile & Test` run is **green** and its log contains **no** "forced to run on Node.js" deprecated-runtime warning (validates the ci.yml bump end-to-end, incl. `docker/login-action` on the dev-snapshot job)
-- [ ] 3.2 Confirm the target majors exist (a wrong pin fails the run on action resolution); note in the PR that `release.yml`'s bump is exercised on the next release tag, and sanity-check that its action majors match `ci.yml`
+- [x] 3.1 Open the PR and confirm the `Compile & Test` run is **green** and its log contains **no** "forced to run on Node.js" deprecated-runtime warning (validates the ci.yml bump end-to-end, incl. `docker/login-action` on the dev-snapshot job)
+- [x] 3.2 Confirm the target majors exist (a wrong pin fails the run on action resolution); note in the PR that `release.yml`'s bump is exercised on the next release tag, and sanity-check that its action majors match `ci.yml`
