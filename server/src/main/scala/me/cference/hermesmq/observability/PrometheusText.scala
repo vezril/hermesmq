@@ -1,6 +1,7 @@
 package me.cference.hermesmq.observability
 
 import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
 
 import java.time.Instant
 
@@ -28,7 +29,8 @@ object PrometheusText:
       subscriptions: List[SubscriptionStats],
       topics: List[TopicStats],
       now: Instant,
-      consumerCounts: Map[SubscriptionId, Int] = Map.empty
+      consumerCounts: Map[SubscriptionId, Int] = Map.empty,
+      dedupCounts: Map[TopicId, Long] = Map.empty
   ): String =
     List(
       block(
@@ -66,5 +68,11 @@ object PrometheusText:
         "Distinct named consumers active within the configured window per subscription.",
         "gauge",
         consumerCounts.toList.sortBy((sub, _) => sub.value).map((sub, count) => ("subscription", sub.value, count.toLong))
+      ),
+      block(
+        "hermesmq_publish_deduplicated_total",
+        "Total publishes collapsed as duplicates per topic.",
+        "counter",
+        dedupCounts.toList.sortBy((topic, _) => topic.value).map((topic, count) => ("topic", topic.value, count))
       )
     ).mkString

@@ -8,6 +8,7 @@ import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.grpc.Message as ProtoMessage
 import me.cference.hermesmq.grpc.PulledMessage as ProtoPulledMessage
 import me.cference.hermesmq.observability.ConsumerRegistry
+import me.cference.hermesmq.observability.DedupCounter
 import me.cference.hermesmq.persistence.CommandReply
 import me.cference.hermesmq.persistence.PulledMessage as DomainPulledMessage
 import me.cference.hermesmq.persistence.SubscriptionService
@@ -34,7 +35,8 @@ final class PubSubGrpcService(
     subscriptions: SubscriptionService,
     streamConfig: StreamConfig = StreamConfig.Default,
     ttlConfig: TtlConfig = TtlConfig.Default,
-    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+    dedup: DedupCounter = DedupCounter()
 )(using ExecutionContext, ActorSystem)
     extends PubSubService:
 
@@ -43,6 +45,7 @@ final class PubSubGrpcService(
       case (Right(topicId), Right(message)) =>
         topics.submit(topicId, TopicCommand.Publish(message)).flatMap {
           case CommandReply.Published(mid, deduplicated) =>
+            if deduplicated then dedup.increment(topicId)
             Future.successful(PublishResponse(messageId = mid.value, deduplicated = deduplicated))
           case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
           case CommandReply.Accepted            => Future.failed(new IllegalStateException("Publish returned Accepted; expected Published"))

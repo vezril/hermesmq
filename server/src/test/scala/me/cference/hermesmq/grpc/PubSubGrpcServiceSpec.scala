@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString
 import io.grpc.Status
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.observability.ConsumerRegistry
+import me.cference.hermesmq.observability.DedupCounter
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
@@ -158,6 +159,21 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       ))
       val _ = resp.messageId shouldBe "orig-1"
       resp.deduplicated shouldBe true
+    }
+
+    "increment the dedup counter when the aggregate reports a duplicate" in {
+      val original = MessageId.from("orig-1").toOption.get
+      val counter  = DedupCounter()
+      val svc      = PubSubGrpcService(topics(CommandReply.Published(original, deduplicated = true)), subs(), dedup = counter)
+      val _ = await(svc.publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"))))
+      counter.counts shouldBe Map(TopicId.from("orders").toOption.get -> 1L)
+    }
+
+    "not increment the dedup counter on a non-duplicate publish" in {
+      val counter = DedupCounter()
+      val svc     = PubSubGrpcService(topics(), subs(), dedup = counter) // default reply → deduplicated=false
+      val _ = await(svc.publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"))))
+      counter.counts shouldBe empty
     }
 
     "map an empty payload to INVALID_ARGUMENT" in {

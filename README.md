@@ -212,6 +212,9 @@ curl -X POST localhost:8080/v1/topics/orders/messages \
 > retry horizon rather than hours. The window is a best-effort retention bound at the
 > millisecond edge (server-clock based); the within-window retry case is exact.
 
+How often dedup fires is exposed as the counter `hermesmq_publish_deduplicated_total{topic}`
+on `/metrics` (per-node, best-effort — see [Observability](#observability)).
+
 ### Snapshots & journal retention
 
 The event-sourced Topic and Subscription aggregates snapshot periodically so
@@ -459,6 +462,7 @@ Exposed metrics:
 | `hermesmq_messages_redelivered_total` | counter | `subscription` | Redeliveries (ack-deadline expiries) |
 | `hermesmq_messages_dead_lettered_total` | counter | `subscription` | Dead-lettered messages |
 | `hermesmq_subscription_consumers` | gauge | `subscription` | Distinct named consumers active within the window |
+| `hermesmq_publish_deduplicated_total` | counter | `topic` | Publishes collapsed as duplicates (per-node, best-effort) |
 
 ```bash
 curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...}]

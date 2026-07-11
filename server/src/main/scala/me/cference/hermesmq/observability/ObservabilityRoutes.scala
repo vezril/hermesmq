@@ -39,7 +39,8 @@ final class ObservabilityRoutes(
     subscriptions: SubscriptionStatsRepository,
     topics: TopicStatsRepository,
     now: () => Instant,
-    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+    dedup: DedupCounter = DedupCounter()
 )(using ExecutionContext):
   import ObservabilityJson.given
   import SprayJsonSupport.*
@@ -87,7 +88,7 @@ final class ObservabilityRoutes(
     for
       s <- subscriptions.list()
       t <- topics.list()
-    yield PrometheusText.render(s, t, at, consumers.activeCountsBySubscription(at))
+    yield PrometheusText.render(s, t, at, consumers.activeCountsBySubscription(at), dedup.counts)
 
   private def toJson(at: Instant, scope: TenantScope, principal: Principal)(s: SubscriptionStats): SubscriptionStatsJson =
     SubscriptionStatsJson(
@@ -107,6 +108,7 @@ object ObservabilityRoutes:
       subscriptions: SubscriptionStatsRepository,
       topics: TopicStatsRepository,
       now: () => Instant = () => Instant.now(),
-      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
+      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+      dedup: DedupCounter = DedupCounter()
   )(using ExecutionContext): ObservabilityRoutes =
-    new ObservabilityRoutes(subscriptions, topics, now, consumers)
+    new ObservabilityRoutes(subscriptions, topics, now, consumers, dedup)
