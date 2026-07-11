@@ -40,6 +40,7 @@ import me.cference.hermesmq.http.PubSubRoutes
 import me.cference.hermesmq.http.Readiness
 import me.cference.hermesmq.http.TopicAdminRoutes
 import me.cference.hermesmq.observability.ConsumerRegistry
+import me.cference.hermesmq.observability.DedupCounter
 import me.cference.hermesmq.observability.JdbcSubscriptionStatsRepository
 import me.cference.hermesmq.observability.JdbcTopicStatsRepository
 import me.cference.hermesmq.observability.ObservabilityRoutes
@@ -195,16 +196,17 @@ object Main:
 
           // Shared, per-node registry of active named consumers (best-effort).
           val consumerRegistry = ConsumerRegistry(consumersConfig.activityWindow)
+          val dedupCounter     = DedupCounter()
 
           // REST: /metrics is public; /v1 requires auth and is tenant-scoped.
-          val observability = ObservabilityRoutes(subStatsRepo, topicStatsRepo, consumers = consumerRegistry)
+          val observability = ObservabilityRoutes(subStatsRepo, topicStatsRepo, consumers = consumerRegistry, dedup = dedupCounter)
           val apiRoutes =
             observability.metricsRoute ~
               Auth.authenticate(authenticator, authConfig) { principal =>
                 val scopedTopics = TenantScopedTopicService(topicService, tenantScope, principal.tenant)
                 val scopedSubs   = TenantScopedSubscriptionService(subscriptionService, tenantScope, principal.tenant)
                 TopicAdminRoutes(scopedTopics, principal).routes ~
-                  PubSubRoutes(scopedTopics, scopedSubs, ttlConfig, consumerRegistry).routes ~
+                  PubSubRoutes(scopedTopics, scopedSubs, ttlConfig, consumerRegistry, dedupCounter).routes ~
                   observability.listings(principal, tenantScope)
               }
 
@@ -219,7 +221,7 @@ object Main:
           // gRPC endpoint (HTTP/2): metadata-aware power APIs authenticate + tenant-scope.
           given org.apache.pekko.actor.ActorSystem = ctx.system.classicSystem
           val topicAdminGrpc = TopicAdminPowerApi(topicService, authenticator, tenantScope, authConfig)
-          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig, consumerRegistry)
+          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig, consumerRegistry, dedupCounter)
           GrpcServer.start(ctx.system, grpcConfig, topicAdminGrpc, pubSubGrpc).onComplete {
             case Success(binding) =>
               ctx.log.info("HermesMQ gRPC listening on {}", binding.localAddress)

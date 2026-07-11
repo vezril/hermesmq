@@ -113,6 +113,15 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
           o.fields("deduplicated").convertTo[Boolean] shouldBe true
         }
     }
+    "increment the dedup counter on a deduplicated publish" in {
+      val original = MessageId.from("orig-1").toOption.get
+      val counter  = me.cference.hermesmq.observability.DedupCounter()
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi","idempotencyKey":"abc"}""")) ~>
+        Route.seal(PubSubRoutes(topicStub(CommandReply.Published(original, deduplicated = true)), subStub(), dedup = counter).routes) ~> check {
+          val _ = status shouldBe StatusCodes.Accepted
+          counter.counts shouldBe Map(TopicId.from("orders").toOption.get -> 1L)
+        }
+    }
     "return 404 when the topic does not exist" in {
       Post("/v1/topics/ghost/messages", json("""{"payload":"hi"}""")) ~>
         routes(topics = topicStub(CommandReply.Rejected(Rejection.TopicNotFound))) ~> check {

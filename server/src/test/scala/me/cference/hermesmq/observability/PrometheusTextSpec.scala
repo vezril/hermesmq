@@ -41,8 +41,10 @@ final class PrometheusTextSpec extends AnyWordSpec with Matchers:
       val _ = out should include("# TYPE hermesmq_subscription_backlog gauge")
       val _ = out should include("# TYPE hermesmq_messages_published_total counter")
       val _ = out should include("# TYPE hermesmq_subscription_consumers gauge")
+      val _ = out should include("# TYPE hermesmq_publish_deduplicated_total counter")
       val _ = out should not include "hermesmq_subscription_backlog{"
-      out should not include "hermesmq_subscription_consumers{"
+      val _ = out should not include "hermesmq_subscription_consumers{"
+      out should not include "hermesmq_publish_deduplicated_total{"
     }
 
     "emit the active-consumer gauge from the consumer counts" in {
@@ -54,5 +56,16 @@ final class PrometheusTextSpec extends AnyWordSpec with Matchers:
       )
       val _ = out should include("# TYPE hermesmq_subscription_consumers gauge")
       out should include("""hermesmq_subscription_consumers{subscription="s1"} 2""")
+    }
+
+    "emit the dedup counter from the dedup counts" in {
+      val out = PrometheusText.render(
+        Nil,
+        Nil,
+        now,
+        dedupCounts = Map(TopicId.from("orders").toOption.get -> 2L)
+      )
+      val _ = out should include("# TYPE hermesmq_publish_deduplicated_total counter")
+      out should include("""hermesmq_publish_deduplicated_total{topic="orders"} 2""")
     }
   }

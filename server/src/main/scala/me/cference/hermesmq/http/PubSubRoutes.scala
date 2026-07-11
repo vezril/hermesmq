@@ -4,6 +4,7 @@ import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.TtlConfig
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.observability.ConsumerRegistry
+import me.cference.hermesmq.observability.DedupCounter
 import me.cference.hermesmq.persistence.CommandReply
 import me.cference.hermesmq.persistence.PulledMessage
 import me.cference.hermesmq.persistence.SubscriptionService
@@ -62,7 +63,8 @@ final class PubSubRoutes(
     topics: TopicService,
     subscriptions: SubscriptionService,
     ttlConfig: TtlConfig = TtlConfig.Default,
-    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+    dedup: DedupCounter = DedupCounter()
 )(using ExecutionContext):
   import PubSubJson.given
   import SprayJsonSupport.*
@@ -83,6 +85,7 @@ final class PubSubRoutes(
                   case Right(message) =>
                     onComplete(topics.submit(topicId, TopicCommand.Publish(message))) {
                       case Success(CommandReply.Published(mid, deduplicated)) =>
+                        if deduplicated then dedup.increment(topicId)
                         complete((StatusCodes.Accepted, PublishResponse(mid.value, deduplicated)))
                       case Success(CommandReply.Rejected(Rejection.TopicNotFound)) => complete(StatusCodes.NotFound)
                       case Success(CommandReply.Rejected(_))                       => complete(StatusCodes.Conflict)
@@ -245,5 +248,6 @@ object PubSubRoutes:
       topics: TopicService,
       subscriptions: SubscriptionService,
       ttlConfig: TtlConfig = TtlConfig.Default,
-      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
-  )(using ExecutionContext): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig, consumers)
+      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+      dedup: DedupCounter = DedupCounter()
+  )(using ExecutionContext): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig, consumers, dedup)
