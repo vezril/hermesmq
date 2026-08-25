@@ -9,6 +9,7 @@ import me.cference.hermesmq.grpc.Message as ProtoMessage
 import me.cference.hermesmq.grpc.PulledMessage as ProtoPulledMessage
 import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.observability.DedupCounter
+import me.cference.hermesmq.observability.ProducerRegistry
 import me.cference.hermesmq.persistence.CommandReply
 import me.cference.hermesmq.persistence.PulledMessage as DomainPulledMessage
 import me.cference.hermesmq.persistence.SubscriptionService
@@ -36,19 +37,23 @@ final class PubSubGrpcService(
     streamConfig: StreamConfig = StreamConfig.Default,
     ttlConfig: TtlConfig = TtlConfig.Default,
     consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
-    dedup: DedupCounter = DedupCounter()
+    dedup: DedupCounter = DedupCounter(),
+    producers: ProducerRegistry = ProducerRegistry(scala.concurrent.duration.Duration.Zero)
 )(using ExecutionContext, ActorSystem)
     extends PubSubService:
 
   def publish(in: PublishRequest): Future[PublishResponse] =
     (TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from), buildMessage(in)) match
       case (Right(topicId), Right(message)) =>
-        topics.submit(topicId, TopicCommand.Publish(message)).flatMap {
-          case CommandReply.Published(mid, deduplicated) =>
-            if deduplicated then dedup.increment(topicId)
-            Future.successful(PublishResponse(messageId = mid.value, deduplicated = deduplicated))
-          case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
-          case CommandReply.Accepted            => Future.failed(new IllegalStateException("Publish returned Accepted; expected Published"))
+        producers.touch(topicId, in.producerId, Instant.now())
+        withProducerMdc(in.producerId) {
+          topics.submit(topicId, TopicCommand.Publish(message)).flatMap {
+            case CommandReply.Published(mid, deduplicated) =>
+              if deduplicated then dedup.increment(topicId)
+              Future.successful(PublishResponse(messageId = mid.value, deduplicated = deduplicated))
+            case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
+            case CommandReply.Accepted            => Future.failed(new IllegalStateException("Publish returned Accepted; expected Published"))
+          }
         }
       case (Left(err), _) => Future.failed(GrpcErrors.invalid(err))
       case (_, Left(err)) => Future.failed(GrpcErrors.invalid(err))
@@ -161,6 +166,14 @@ final class PubSubGrpcService(
       MDC.put("consumer", consumerId)
       try body
       finally MDC.remove("consumer")
+
+  /** As [[withConsumerMdc]] but for the producer id on a publish (top-level `producer`). */
+  private def withProducerMdc[A](producerId: String)(body: => Future[A]): Future[A] =
+    if producerId.isEmpty then body
+    else
+      MDC.put("producer", producerId)
+      try body
+      finally MDC.remove("producer")
 
   /** Parse a subscription id (blank/invalid → INVALID_ARGUMENT) then run `f`. */
   private def withSubId[A](raw: String)(f: SubscriptionId => Future[A]): Future[A] =

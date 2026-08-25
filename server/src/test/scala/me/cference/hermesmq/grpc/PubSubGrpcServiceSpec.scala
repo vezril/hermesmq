@@ -5,6 +5,7 @@ import io.grpc.Status
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.observability.DedupCounter
+import me.cference.hermesmq.observability.ProducerRegistry
 import me.cference.hermesmq.persistence.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
@@ -174,6 +175,20 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       val svc     = PubSubGrpcService(topics(), subs(), dedup = counter) // default reply → deduplicated=false
       val _ = await(svc.publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"))))
       counter.counts shouldBe empty
+    }
+
+    "record a named producer as active on publish" in {
+      val reg = ProducerRegistry(1.minute)
+      val svc = PubSubGrpcService(topics(), subs(), producers = reg)
+      val _ = await(svc.publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), producerId = "ingest-7")))
+      reg.activeCount(TopicId.from("orders").toOption.get, Instant.now()) shouldBe 1
+    }
+
+    "not record a producer when the id is empty (anonymous publish)" in {
+      val reg = ProducerRegistry(1.minute)
+      val svc = PubSubGrpcService(topics(), subs(), producers = reg)
+      val _ = await(svc.publish(PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), producerId = "")))
+      reg.activeCount(TopicId.from("orders").toOption.get, Instant.now()) shouldBe 0
     }
 
     "map an empty payload to INVALID_ARGUMENT" in {

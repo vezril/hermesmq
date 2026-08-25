@@ -46,6 +46,7 @@ clustering and horizontal scaling are non-goals.
 | Schema self-migration on boot (idempotent, opt-out) | ✅ Done |
 | Structured JSON logging (`LOG_FORMAT`, constellation schema) | ✅ Done |
 | Named consumers (optional consumer id + active-consumer metric) | ✅ Done |
+| Named producers (optional producer id + active-producer metric) | ✅ Done |
 
 ## Prerequisites
 
@@ -463,6 +464,7 @@ Exposed metrics:
 | `hermesmq_messages_dead_lettered_total` | counter | `subscription` | Dead-lettered messages |
 | `hermesmq_subscription_consumers` | gauge | `subscription` | Distinct named consumers active within the window |
 | `hermesmq_publish_deduplicated_total` | counter | `topic` | Publishes collapsed as duplicates (per-node, best-effort) |
+| `hermesmq_topic_producers` | gauge | `topic` | Distinct named producers active within the window (per-node) |
 
 ```bash
 curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...}]
@@ -512,6 +514,25 @@ id is anonymous (today's behaviour).
 > gauge reflects consumers attached to *this* instance. That is exact under the
 > single-replica deployment; cluster-wide aggregation is a future extension (the
 > metric name and meaning would not change).
+
+### Named producers
+
+The producer-side twin of named consumers: a publisher may **name itself** with
+an optional `producer_id` (gRPC `PublishRequest`) / `producerId` (REST publish
+body), so operators can see who's publishing to a topic. Purely observability —
+it does not change whether or how a message is published.
+
+Naming a producer feeds the `hermesmq_topic_producers` gauge (distinct producers
+seen within the activity window, per topic) and a `producer` field on the JSON
+logs emitted while serving that publish. An empty/absent id is anonymous.
+
+| Variable                            | Default | Description                                                    |
+|-------------------------------------|---------|----------------------------------------------------------------|
+| `HERMESMQ_PRODUCERS_ACTIVITY_WINDOW`| `60s`   | How long a producer counts as active since its last publish. `0` = off (registry + metric disabled). |
+
+> **Caveat:** same as the consumer gauge — in-memory, **per-node**, best-effort;
+> exact under the single-replica deployment, cluster-wide aggregation a future
+> extension.
 
 ## Scala client library
 

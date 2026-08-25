@@ -9,6 +9,7 @@ import me.cference.hermesmq.config.StreamConfig
 import me.cference.hermesmq.config.TtlConfig
 import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.observability.DedupCounter
+import me.cference.hermesmq.observability.ProducerRegistry
 import me.cference.hermesmq.persistence.SubscriptionService
 import me.cference.hermesmq.persistence.TopicService
 import org.apache.pekko.NotUsed
@@ -58,7 +59,8 @@ final class PubSubPowerApi(
     streamConfig: StreamConfig = StreamConfig.Default,
     ttlConfig: TtlConfig = TtlConfig.Default,
     consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
-    dedup: DedupCounter = DedupCounter()
+    dedup: DedupCounter = DedupCounter(),
+    producers: ProducerRegistry = ProducerRegistry(scala.concurrent.duration.Duration.Zero)
 )(using ExecutionContext, ActorSystem)
     extends PubSubServicePowerApi:
 
@@ -90,7 +92,8 @@ final class PubSubPowerApi(
       streamConfig,
       ttlConfig,
       consumers,
-      dedup
+      dedup,
+      producers
     )
 
   private def authed[A](metadata: Metadata)(f: PubSubGrpcService => Future[A]): Future[A] =
