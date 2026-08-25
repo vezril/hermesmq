@@ -23,6 +23,6 @@ final class ClusterConfigSpec extends AnyFunSuite:
   }
 
   test("artery remoting is configured") {
-    assert(activated.getString("pekko.remote.artery.transport") == "tcp")
+    val _ = assert(activated.getString("pekko.remote.artery.transport") == "tcp")
     assert(activated.hasPath("pekko.remote.artery.canonical.port"))
   }

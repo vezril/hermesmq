@@ -1,12 +1,20 @@
 package me.cference.hermesmq.observability
 
 import me.cference.hermesmq.config.DbConfig
-import me.cference.hermesmq.domain.{AckId, SubscriptionEvent, SubscriptionId, TopicId}
+import me.cference.hermesmq.domain.AckId
+import me.cference.hermesmq.domain.SubscriptionEvent
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
 
-import java.sql.{Connection, DriverManager, Timestamp}
-import java.time.{Duration, Instant}
+import java.sql.Connection
+import java.sql.DriverManager
+import java.sql.Timestamp
+import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.{ExecutionContext, Future, blocking}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
+import scala.concurrent.blocking
 
 /** Observability snapshot for one subscription. `oldestUnackedAt` is the delivery
   * (publish) time of the oldest outstanding message, or `None` when the backlog
@@ -67,22 +75,22 @@ final class InMemorySubscriptionStatsRepository(using ExecutionContext)
   private val counters = new AtomicReference(Map.empty[SubscriptionId, (Long, Long)]) // (redelivered, deadLettered)
 
   def registerSubscription(subscriptionId: SubscriptionId, topicId: TopicId): Unit =
-    topics.updateAndGet(_.updated(subscriptionId, topicId))
-    counters.updateAndGet(m => if m.contains(subscriptionId) then m else m.updated(subscriptionId, (0L, 0L)))
+    val _ = topics.updateAndGet(_.updated(subscriptionId, topicId))
+    val _ = counters.updateAndGet(m => if m.contains(subscriptionId) then m else m.updated(subscriptionId, (0L, 0L)))
 
   def delivered(subscriptionId: SubscriptionId, ackId: AckId, deliveredAt: Instant): Unit =
-    backlog.updateAndGet(_.updated((subscriptionId, ackId), deliveredAt))
+    val _ = backlog.updateAndGet(_.updated((subscriptionId, ackId), deliveredAt))
 
   def removed(subscriptionId: SubscriptionId, ackId: AckId): Unit =
-    backlog.updateAndGet(_.removed((subscriptionId, ackId)))
+    val _ = backlog.updateAndGet(_.removed((subscriptionId, ackId)))
 
   def redelivered(subscriptionId: SubscriptionId): Unit =
-    counters.updateAndGet { m =>
+    val _ = counters.updateAndGet { m =>
       val (r, d) = m.getOrElse(subscriptionId, (0L, 0L)); m.updated(subscriptionId, (r + 1, d))
     }
 
   def deadLettered(subscriptionId: SubscriptionId): Unit =
-    counters.updateAndGet { m =>
+    val _ = counters.updateAndGet { m =>
       val (r, d) = m.getOrElse(subscriptionId, (0L, 0L)); m.updated(subscriptionId, (r, d + 1))
     }
 
@@ -109,7 +117,7 @@ final class JdbcSubscriptionStatsSink(conn: Connection) extends SubscriptionStat
       """INSERT INTO subscription_stats (subscription_id, topic_id, redelivered_total, dead_lettered_total)
         |VALUES (?, ?, 0, 0) ON CONFLICT (subscription_id) DO UPDATE SET topic_id = EXCLUDED.topic_id""".stripMargin
     )
-    ps.setString(1, subscriptionId.value); ps.setString(2, topicId.value); ps.executeUpdate()
+    ps.setString(1, subscriptionId.value); ps.setString(2, topicId.value); val _ = ps.executeUpdate()
 
   def delivered(subscriptionId: SubscriptionId, ackId: AckId, deliveredAt: Instant): Unit =
     val ps = conn.prepareStatement(
@@ -117,11 +125,11 @@ final class JdbcSubscriptionStatsSink(conn: Connection) extends SubscriptionStat
         |ON CONFLICT (subscription_id, ack_id) DO NOTHING""".stripMargin
     )
     ps.setString(1, subscriptionId.value); ps.setString(2, ackId.value); ps.setTimestamp(3, Timestamp.from(deliveredAt))
-    ps.executeUpdate()
+    val _ = ps.executeUpdate()
 
   def removed(subscriptionId: SubscriptionId, ackId: AckId): Unit =
     val ps = conn.prepareStatement("DELETE FROM subscription_backlog WHERE subscription_id = ? AND ack_id = ?")
-    ps.setString(1, subscriptionId.value); ps.setString(2, ackId.value); ps.executeUpdate()
+    ps.setString(1, subscriptionId.value); ps.setString(2, ackId.value); val _ = ps.executeUpdate()
 
   def redelivered(subscriptionId: SubscriptionId): Unit = bump("redelivered_total", subscriptionId)
   def deadLettered(subscriptionId: SubscriptionId): Unit = bump("dead_lettered_total", subscriptionId)
@@ -131,7 +139,7 @@ final class JdbcSubscriptionStatsSink(conn: Connection) extends SubscriptionStat
       s"""INSERT INTO subscription_stats (subscription_id, topic_id, redelivered_total, dead_lettered_total)
          |VALUES (?, '', 0, 0) ON CONFLICT (subscription_id) DO UPDATE SET $column = subscription_stats.$column + 1""".stripMargin
     )
-    ps.setString(1, subscriptionId.value); ps.executeUpdate()
+    ps.setString(1, subscriptionId.value); val _ = ps.executeUpdate()
 
 /** Read side backed by PostgreSQL. */
 final class JdbcSubscriptionStatsRepository(dbConfig: DbConfig)(using ExecutionContext) extends SubscriptionStatsRepository:
@@ -150,22 +158,23 @@ final class JdbcSubscriptionStatsRepository(dbConfig: DbConfig)(using ExecutionC
                 |GROUP BY s.subscription_id, s.topic_id, s.redelivered_total, s.dead_lettered_total""".stripMargin
             )
             .executeQuery()
-          val builder = List.newBuilder[SubscriptionStats]
-          while rs.next() do
-            for
-              sub   <- SubscriptionId.from(rs.getString("subscription_id")).toOption
-              topic <- TopicId.from(rs.getString("topic_id")).toOption
-            do
-              val oldest = Option(rs.getTimestamp("oldest")).map(_.toInstant)
-              builder += SubscriptionStats(
+          Iterator
+            .continually(rs)
+            .takeWhile(_.next())
+            .flatMap { r =>
+              for
+                sub   <- SubscriptionId.from(r.getString("subscription_id")).toOption
+                topic <- TopicId.from(r.getString("topic_id")).toOption
+              yield SubscriptionStats(
                 sub,
                 topic,
-                rs.getInt("backlog"),
-                oldest,
-                rs.getLong("redelivered_total"),
-                rs.getLong("dead_lettered_total")
+                r.getInt("backlog"),
+                Option(r.getTimestamp("oldest")).map(_.toInstant),
+                r.getLong("redelivered_total"),
+                r.getLong("dead_lettered_total")
               )
-          builder.result()
+            }
+            .toList
         finally conn.close()
       }
     }

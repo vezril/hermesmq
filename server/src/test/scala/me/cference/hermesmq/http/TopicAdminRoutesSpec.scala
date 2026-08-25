@@ -1,8 +1,12 @@
 package me.cference.hermesmq.http
 
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
-import org.apache.pekko.http.scaladsl.model.{ContentTypes, HttpEntity, StatusCodes}
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.persistence.TopicSnapshot
+import org.apache.pekko.http.scaladsl.model.ContentTypes
+import org.apache.pekko.http.scaladsl.model.HttpEntity
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.testkit.ScalatestRouteTest
 import org.scalatest.matchers.should.Matchers
@@ -59,9 +63,9 @@ final class TopicAdminRoutesSpec extends AnyWordSpec with Matchers with Scalates
   "GET /v1/topics/{id}" should {
     "return 200 with the topic labels when it exists" in {
       Get("/v1/topics/orders") ~> routes(stub(queryReply = Some(TopicSnapshot(topicId, Map("team" -> "payments"))))) ~> check {
-        status shouldBe StatusCodes.OK
+        val _ = status shouldBe StatusCodes.OK
         val json = responseAs[String].parseJson.asJsObject
-        json.fields("topicId").convertTo[String] shouldBe "orders"
+        val _ = json.fields("topicId").convertTo[String] shouldBe "orders"
         json.fields("labels").convertTo[Map[String, String]] shouldBe Map("team" -> "payments")
       }
     }

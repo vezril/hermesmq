@@ -1,6 +1,7 @@
 package me.cference.hermesmq.delivery
 
-import me.cference.hermesmq.domain.{SubscriptionId, TopicId}
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
@@ -23,7 +24,7 @@ final class TopicSubscriptionsRepositorySpec extends AnyFunSuite with Matchers w
     val repo = InMemoryTopicSubscriptionsRepository()
     repo.add(tid("orders"), sid("s1")).futureValue
     repo.add(tid("billing"), sid("s2")).futureValue
-    repo.subscriptionsFor(tid("orders")).futureValue shouldBe Set(sid("s1"))
+    val _ = repo.subscriptionsFor(tid("orders")).futureValue shouldBe Set(sid("s1"))
     repo.subscriptionsFor(tid("billing")).futureValue shouldBe Set(sid("s2"))
   }
 

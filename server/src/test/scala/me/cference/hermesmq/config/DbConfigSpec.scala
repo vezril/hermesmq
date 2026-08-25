@@ -10,7 +10,7 @@ final class DbConfigSpec extends AnyFunSuite:
 
   test("defaults load from application.conf") {
     val result = DbConfig.from(ConfigFactory.load())
-    assert(result.map(_.database) == Right("hermesmq"))
+    val _ = assert(result.map(_.database) == Right("hermesmq"))
     assert(result.map(_.port) == Right(5432))
   }
 
@@ -19,8 +19,8 @@ final class DbConfigSpec extends AnyFunSuite:
       .parseString("""hermesmq.db { host = "db.internal", port = 6000, database = "prod" }""")
       .withFallback(ConfigFactory.load())
     val result = DbConfig.from(cfg)
-    assert(result.map(_.host) == Right("db.internal"))
-    assert(result.map(_.port) == Right(6000))
+    val _ = assert(result.map(_.host) == Right("db.internal"))
+    val _ = assert(result.map(_.port) == Right(6000))
     assert(result.map(_.database) == Right("prod"))
   }
 
@@ -39,7 +39,7 @@ final class DbConfigSpec extends AnyFunSuite:
   }
 
   test("migrate-on-start defaults to true and is overridable") {
-    assert(DbConfig.from(ConfigFactory.load()).map(_.migrateOnStart) == Right(true))
+    val _ = assert(DbConfig.from(ConfigFactory.load()).map(_.migrateOnStart) == Right(true))
     val off = ConfigFactory.parseString("hermesmq.db.migrate-on-start = false").withFallback(ConfigFactory.load())
     assert(DbConfig.from(off).map(_.migrateOnStart) == Right(false))
   }

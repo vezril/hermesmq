@@ -1,12 +1,17 @@
 package me.cference.hermesmq.delivery
 
 import me.cference.hermesmq.config.DbConfig
-import me.cference.hermesmq.domain.{AckId, SubscriptionId}
+import me.cference.hermesmq.domain.AckId
+import me.cference.hermesmq.domain.SubscriptionId
 
-import java.sql.{Connection, DriverManager, Timestamp}
+import java.sql.Connection
+import java.sql.DriverManager
+import java.sql.Timestamp
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.{ExecutionContext, Future, blocking}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
+import scala.concurrent.blocking
 
 /** One currently-leased message and the instant its ack deadline expires. */
 final case class OutstandingLease(subscriptionId: SubscriptionId, ackId: AckId, deadline: Instant)
@@ -80,14 +85,17 @@ final class JdbcOutstandingLeaseRepository(dbConfig: DbConfig)(using ExecutionCo
             "SELECT subscription_id, ack_id, deadline FROM outstanding_leases WHERE deadline <= ?"
           )
           ps.setTimestamp(1, Timestamp.from(now))
-          val rs      = ps.executeQuery()
-          val builder = List.newBuilder[OutstandingLease]
-          while rs.next() do
-            for
-              sub <- SubscriptionId.from(rs.getString(1)).toOption
-              ack <- AckId.from(rs.getString(2)).toOption
-            do builder += OutstandingLease(sub, ack, rs.getTimestamp(3).toInstant)
-          builder.result()
+          val rs = ps.executeQuery()
+          Iterator
+            .continually(rs)
+            .takeWhile(_.next())
+            .flatMap { r =>
+              for
+                sub <- SubscriptionId.from(r.getString(1)).toOption
+                ack <- AckId.from(r.getString(2)).toOption
+              yield OutstandingLease(sub, ack, r.getTimestamp(3).toInstant)
+            }
+            .toList
         }
       }
     }

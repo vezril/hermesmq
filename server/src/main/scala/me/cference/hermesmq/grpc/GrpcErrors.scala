@@ -1,7 +1,8 @@
 package me.cference.hermesmq.grpc
 
 import io.grpc.Status
-import me.cference.hermesmq.domain.{Rejection, ValidationError}
+import me.cference.hermesmq.domain.Rejection
+import me.cference.hermesmq.domain.ValidationError
 import org.apache.pekko.grpc.GrpcServiceException
 
 /** Maps domain outcomes to gRPC statuses so the two API surfaces report failures

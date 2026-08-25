@@ -12,7 +12,7 @@ final class DedupConfigSpec extends AnyFunSuite:
     DedupConfig.from(ConfigFactory.parseString(overrides).withFallback(ConfigFactory.load()))
 
   test("default is off (0)") {
-    assert(load() == Right(DedupConfig(Duration.Zero)))
+    val _ = assert(load() == Right(DedupConfig(Duration.Zero)))
     assert(load().toOption.get.enabled == false)
   }
 

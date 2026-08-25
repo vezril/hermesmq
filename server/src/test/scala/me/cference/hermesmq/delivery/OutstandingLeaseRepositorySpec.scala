@@ -1,6 +1,7 @@
 package me.cference.hermesmq.delivery
 
-import me.cference.hermesmq.domain.{AckId, SubscriptionId}
+import me.cference.hermesmq.domain.AckId
+import me.cference.hermesmq.domain.SubscriptionId
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -24,7 +25,7 @@ final class OutstandingLeaseRepositorySpec extends AnyWordSpec with Matchers:
     "list a lease whose deadline is at or before now as overdue" in {
       val repo = InMemoryOutstandingLeaseRepository()
       await(repo.leased(sub, ack1, t0))
-      await(repo.overdue(t0)) shouldBe List(OutstandingLease(sub, ack1, t0))
+      val _ = await(repo.overdue(t0)) shouldBe List(OutstandingLease(sub, ack1, t0))
       await(repo.overdue(later)) shouldBe List(OutstandingLease(sub, ack1, t0))
     }
 
@@ -45,7 +46,7 @@ final class OutstandingLeaseRepositorySpec extends AnyWordSpec with Matchers:
       val repo = InMemoryOutstandingLeaseRepository()
       await(repo.leased(sub, ack1, t0))
       await(repo.leased(sub, ack1, later))
-      await(repo.overdue(t0)) shouldBe Nil
+      val _ = await(repo.overdue(t0)) shouldBe Nil
       await(repo.overdue(later)) shouldBe List(OutstandingLease(sub, ack1, later))
     }
 

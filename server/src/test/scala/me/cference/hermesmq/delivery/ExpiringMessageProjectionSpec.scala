@@ -27,7 +27,7 @@ final class ExpiringMessageProjectionSpec extends AnyWordSpec with Matchers:
     "track a delivered message that has an expireTime" in {
       val repo = InMemoryExpiringMessageRepository()
       index(repo, SubscriptionEvent.MessageDelivered(ack1, msg(Some(later))))
-      await(repo.expired(later)).map(_.ackId) shouldBe List(ack1)
+      val _ = await(repo.expired(later)).map(_.ackId) shouldBe List(ack1)
       await(repo.expired(t0)) shouldBe Nil // not yet expired
     }
 

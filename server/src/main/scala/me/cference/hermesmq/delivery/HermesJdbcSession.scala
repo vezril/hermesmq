@@ -4,7 +4,8 @@ import me.cference.hermesmq.config.DbConfig
 import org.apache.pekko.japi.function.Function
 import org.apache.pekko.projection.jdbc.JdbcSession
 
-import java.sql.{Connection, DriverManager}
+import java.sql.Connection
+import java.sql.DriverManager
 
 /** A [[JdbcSession]] for the Pekko Projection JDBC offset store, wrapping a
   * plain JDBC connection to the configured PostgreSQL database.

@@ -1,9 +1,10 @@
 package me.cference.hermesmq.http
 
-import org.apache.pekko.http.scaladsl.model.{ContentTypes, StatusCodes}
+import org.apache.pekko.http.scaladsl.model.ContentTypes
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.testkit.ScalatestRouteTest
-import org.scalatest.wordspec.AnyWordSpec
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
 import spray.json.*
 
 import java.util.concurrent.atomic.AtomicBoolean
@@ -23,18 +24,18 @@ final class HealthRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
   "GET /health" should {
     "return 200 with a JSON status body" in {
       Get("/health") ~> routes ~> check {
-        status shouldBe StatusCodes.OK
-        contentType shouldBe ContentTypes.`application/json`
+        val _ = status shouldBe StatusCodes.OK
+        val _ = contentType shouldBe ContentTypes.`application/json`
         val json = responseAs[String].parseJson.asJsObject
-        json.fields("status").convertTo[String] shouldBe "UP"
-        json.fields("service").convertTo[String] shouldBe "hermesmq"
+        val _ = json.fields("status").convertTo[String] shouldBe "UP"
+        val _ = json.fields("service").convertTo[String] shouldBe "hermesmq"
         json.fields("version").convertTo[String] shouldBe "1.2.3-test"
       }
     }
 
     "respond 200 with no body to HEAD" in {
       Head("/health") ~> routes ~> check {
-        status shouldBe StatusCodes.OK
+        val _ = status shouldBe StatusCodes.OK
         responseAs[String] shouldBe empty
       }
     }
@@ -64,7 +65,7 @@ final class HealthRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
     "report 503 on readiness while liveness still returns 200 during drain" in {
       val (flag, health) = build(ready = true)
       flag.set(false) // simulate shutdown draining
-      Get("/health/ready") ~> health.routes ~> check {
+      val _ = Get("/health/ready") ~> health.routes ~> check {
         status shouldBe StatusCodes.ServiceUnavailable
       }
       Get("/health") ~> health.routes ~> check {
@@ -76,7 +77,7 @@ final class HealthRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
       val readiness = Readiness(persistenceHealthy = () => false)
       readiness.markBound() // bound, but persistence is down
       val routes = HealthRoutes(version = "1.2.3-test", readiness = () => readiness.isReady).routes
-      Get("/health/ready") ~> routes ~> check {
+      val _ = Get("/health/ready") ~> routes ~> check {
         status shouldBe StatusCodes.ServiceUnavailable
       }
       Get("/health") ~> routes ~> check {

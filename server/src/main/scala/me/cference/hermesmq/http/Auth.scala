@@ -1,11 +1,15 @@
 package me.cference.hermesmq.http
 
-import me.cference.hermesmq.auth.{Authenticator, Principal, TenantScope}
+import me.cference.hermesmq.auth.Authenticator
+import me.cference.hermesmq.auth.Principal
+import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.AuthConfig
 import org.apache.pekko.http.scaladsl.model.headers.HttpChallenge
-import org.apache.pekko.http.scaladsl.server.AuthenticationFailedRejection.{CredentialsMissing, CredentialsRejected}
+import org.apache.pekko.http.scaladsl.server.AuthenticationFailedRejection
+import org.apache.pekko.http.scaladsl.server.AuthenticationFailedRejection.CredentialsMissing
+import org.apache.pekko.http.scaladsl.server.AuthenticationFailedRejection.CredentialsRejected
+import org.apache.pekko.http.scaladsl.server.Directive1
 import org.apache.pekko.http.scaladsl.server.Directives.*
-import org.apache.pekko.http.scaladsl.server.{AuthenticationFailedRejection, Directive1}
 
 /** Authentication boundary for the `/v1` routes. Extracts a bearer token /
   * `X-API-Key`, authenticates it, and provides the resulting [[Principal]]. When

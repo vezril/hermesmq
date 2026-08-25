@@ -1,8 +1,13 @@
 package me.cference.hermesmq.persistence
 
-import me.cference.hermesmq.domain.{Message, MessageId, Rejection}
+import me.cference.hermesmq.domain.AckId
+import me.cference.hermesmq.domain.Message
+import me.cference.hermesmq.domain.MessageId
+import me.cference.hermesmq.domain.Rejection
+import me.cference.hermesmq.domain.SubscriptionCommand
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
 import org.apache.pekko.actor.typed.ActorRef
-import me.cference.hermesmq.domain.{AckId, SubscriptionCommand, TopicCommand, TopicId}
 
 import java.time.Instant
 import scala.concurrent.duration.FiniteDuration

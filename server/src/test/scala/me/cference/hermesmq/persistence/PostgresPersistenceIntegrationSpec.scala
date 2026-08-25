@@ -1,7 +1,8 @@
 package me.cference.hermesmq.persistence
 
 import com.typesafe.config.ConfigFactory
-import me.cference.hermesmq.config.{DedupConfig, RetentionConfig}
+import me.cference.hermesmq.config.DedupConfig
+import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.domain.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.scalatest.BeforeAndAfterAll
@@ -53,12 +54,12 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       testKit = ActorTestKit("pgit", config)
 
   override def afterAll(): Unit =
-    if testKit != null then testKit.shutdownTestKit()
-    if container != null then container.stop()
+    Option(testKit).foreach(_.shutdownTestKit())
+    Option(container).foreach(_.stop())
 
   "Persistence against PostgreSQL" should {
     "durably persist an event and recover state across an entity restart" taggedAs PostgresIT in {
-      assume(dockerAvailable, "Docker is not available")
+      val _ = assume(dockerAvailable, "Docker is not available")
 
       val subId   = SubscriptionId.from("sub-it").toOption.get
       val topicId = TopicId.from("orders").toOption.get
@@ -67,7 +68,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       // First incarnation: create the subscription (writes to Postgres).
       val first = testKit.spawn(SubscriptionEntity(subId))
       first ! SubscriptionEntityCommand.Submit(SubscriptionCommand.CreateSubscription(subId, topicId), probe.ref)
-      probe.expectMessage(20.seconds,CommandReply.Accepted)
+      val _ = probe.expectMessage(20.seconds,CommandReply.Accepted)
       testKit.stop(first)
 
       // Second incarnation recovers from the journal: creating again is rejected,
@@ -78,7 +79,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
     }
 
     "deduplicate a repeated idempotency key across a topic-entity restart within the window" taggedAs PostgresIT in {
-      assume(dockerAvailable, "Docker is not available")
+      val _ = assume(dockerAvailable, "Docker is not available")
 
       val topicId = TopicId.from("dedup-it").toOption.get
       val probe   = testKit.createTestProbe[CommandReply]()
@@ -89,10 +90,10 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       // First incarnation: create the topic and publish a keyed message.
       val first    = testKit.spawn(TopicEntity(topicId, dedup = DedupConfig(1.hour)))
       first ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(topicId), probe.ref)
-      probe.expectMessage(20.seconds, CommandReply.Accepted)
+      val _ = probe.expectMessage(20.seconds, CommandReply.Accepted)
       val original = keyed("m-1", t0)
       first ! TopicEntityCommand.Submit(TopicCommand.Publish(original), probe.ref)
-      probe.expectMessage(20.seconds, CommandReply.Published(original.id, deduplicated = false))
+      val _ = probe.expectMessage(20.seconds, CommandReply.Published(original.id, deduplicated = false))
       testKit.stop(first)
 
       // Second incarnation rebuilds the seen-set from the journal, so a retry with
@@ -103,7 +104,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
     }
 
     "lease, expire, redeliver, and finally dead-letter across attempts, surviving restarts" taggedAs PostgresIT in {
-      assume(dockerAvailable, "Docker is not available")
+      val _ = assume(dockerAvailable, "Docker is not available")
 
       val subId    = SubscriptionId.from("sub-redeliver").toOption.get
       val topicId  = TopicId.from("orders").toOption.get
@@ -117,7 +118,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       val pull  = testKit.createTestProbe[Option[List[PulledMessage]]]()
       def submit(entity: org.apache.pekko.actor.typed.ActorRef[SubscriptionEntityCommand], cmd: SubscriptionCommand): Unit =
         entity ! SubscriptionEntityCommand.Submit(cmd, reply.ref)
-        reply.expectMessage(20.seconds, CommandReply.Accepted)
+        val _ = reply.expectMessage(20.seconds, CommandReply.Accepted)
       def doPull(entity: org.apache.pekko.actor.typed.ActorRef[SubscriptionEntityCommand], now: Instant): Option[List[PulledMessage]] =
         entity ! SubscriptionEntityCommand.Pull(10, deadline, now, pull.ref)
         pull.receiveMessage(20.seconds)
@@ -128,22 +129,22 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       submit(e1, SubscriptionCommand.RecordDelivery(ackId, message))
 
       // Pull leases it; a second pull within the deadline sees nothing.
-      doPull(e1, t0) shouldBe Some(List(PulledMessage(ackId, message)))
-      doPull(e1, t0.plusSeconds(1)) shouldBe Some(Nil)
+      val _ = doPull(e1, t0) shouldBe Some(List(PulledMessage(ackId, message)))
+      val _ = doPull(e1, t0.plusSeconds(1)) shouldBe Some(Nil)
 
       // No ack: the sweep expires the overdue lease (attempt 1 < max) → redeliverable.
       submit(e1, SubscriptionCommand.ExpireAckDeadline(ackId, t0.plusSeconds(31), maxAtt))
-      doPull(e1, t0.plusSeconds(31)) shouldBe Some(List(PulledMessage(ackId, message)))
+      val _ = doPull(e1, t0.plusSeconds(31)) shouldBe Some(List(PulledMessage(ackId, message)))
 
       // Restart mid-flight: the attempt count and lease survive recovery.
       testKit.stop(e1)
       val e2 = testKit.spawn(SubscriptionEntity(subId))
       submit(e2, SubscriptionCommand.ExpireAckDeadline(ackId, t0.plusSeconds(62), maxAtt)) // attempt 2 < max
-      doPull(e2, t0.plusSeconds(62)) shouldBe Some(List(PulledMessage(ackId, message)))
+      val _ = doPull(e2, t0.plusSeconds(62)) shouldBe Some(List(PulledMessage(ackId, message)))
 
       // Third expiry reaches the limit → dead-lettered and removed; stays gone.
       submit(e2, SubscriptionCommand.ExpireAckDeadline(ackId, t0.plusSeconds(200), maxAtt)) // attempt 3 == max
-      doPull(e2, t0.plusSeconds(300)) shouldBe Some(Nil)
+      val _ = doPull(e2, t0.plusSeconds(300)) shouldBe Some(Nil)
 
       testKit.stop(e2)
       val e3 = testKit.spawn(SubscriptionEntity(subId))
@@ -151,7 +152,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
     }
 
     "snapshot and retain: bound the journal and recover state across a restart" taggedAs PostgresIT in {
-      assume(dockerAvailable, "Docker is not available")
+      val _ = assume(dockerAvailable, "Docker is not available")
 
       val subId   = SubscriptionId.from("sub-snapshot-it").toOption.get
       val topicId = TopicId.from("orders").toOption.get
@@ -165,7 +166,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
 
       val e1 = testKit.spawn(SubscriptionEntity(subId, retention))
       e1 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.CreateSubscription(subId, topicId), reply.ref)
-      reply.expectMessage(20.seconds, CommandReply.Accepted)
+      val _ = reply.expectMessage(20.seconds, CommandReply.Accepted)
       (1 to delivered).foreach { i =>
         val ackId = AckId.from(s"ack-$i").toOption.get
         e1 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.RecordDelivery(ackId, msg), reply.ref)
@@ -174,7 +175,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
 
       // The journal is bounded: old events were deleted on snapshot, so far fewer
       // than the (1 create + `delivered`) events persisted remain in Postgres.
-      journalRowCount(pid) should be < (delivered + 1)
+      val _ = journalRowCount(pid) should be < (delivered + 1)
 
       // Restart: the entity recovers its outstanding set from snapshot + surviving events.
       testKit.stop(e1)
@@ -184,7 +185,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
     }
 
     "expire a TTL'd message: purge it from outstanding while a no-ttl message survives" taggedAs PostgresIT in {
-      assume(dockerAvailable, "Docker is not available")
+      val _ = assume(dockerAvailable, "Docker is not available")
 
       val subId   = SubscriptionId.from("sub-ttl-it").toOption.get
       val topicId = TopicId.from("orders").toOption.get
@@ -197,7 +198,7 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
       val pull     = testKit.createTestProbe[Option[List[PulledMessage]]]()
 
       def submit(e: org.apache.pekko.actor.typed.ActorRef[SubscriptionEntityCommand], c: SubscriptionCommand): Unit =
-        e ! SubscriptionEntityCommand.Submit(c, reply.ref); reply.expectMessage(20.seconds, CommandReply.Accepted)
+        e ! SubscriptionEntityCommand.Submit(c, reply.ref); val _ = reply.expectMessage(20.seconds, CommandReply.Accepted)
 
       val e1 = testKit.spawn(SubscriptionEntity(subId))
       submit(e1, SubscriptionCommand.CreateSubscription(subId, topicId))
@@ -209,13 +210,13 @@ final class PostgresPersistenceIntegrationSpec extends AnyWordSpec with Matchers
 
       // Pull after expiry returns only the surviving no-ttl message; the expired one is gone.
       e1 ! SubscriptionEntityCommand.Pull(10, 30.seconds, t0.plusSeconds(31), pull.ref)
-      pull.receiveMessage(20.seconds) shouldBe Some(List(PulledMessage(ackPlain, plainMsg)))
+      val _ = pull.receiveMessage(20.seconds) shouldBe Some(List(PulledMessage(ackPlain, plainMsg)))
 
       // Purge survives restart: the expired message is gone, the surviving one recovers.
       testKit.stop(e1)
       val e2 = testKit.spawn(SubscriptionEntity(subId))
       e2 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.Acknowledge(ackTtl), reply.ref)
-      reply.expectMessage(20.seconds, CommandReply.Rejected(Rejection.UnknownAckId(ackTtl))) // expired → gone
+      val _ = reply.expectMessage(20.seconds, CommandReply.Rejected(Rejection.UnknownAckId(ackTtl))) // expired → gone
       e2 ! SubscriptionEntityCommand.Submit(SubscriptionCommand.Acknowledge(ackPlain), reply.ref)
       reply.expectMessage(20.seconds, CommandReply.Accepted) // survived and recovered
     }

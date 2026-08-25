@@ -82,6 +82,23 @@ boot/shutdown test (`HttpServerSpec`), and config parsing tests
 (`ServiceConfigSpec`). Actor systems are shut down after each suite, so no
 dispatcher threads are left running.
 
+## Static analysis
+
+CI enforces several gates beyond compile + test:
+
+| Gate | What it does | Failing? |
+|------|--------------|----------|
+| `-Werror -Wunused:all -Wvalue-discard -Wnonunit-statement` | Strict Scala 3 compiler warnings as errors — no unused symbols, no silently-discarded non-Unit values or statements | Build fails |
+| `scalafixAll --check` | Lint rules: `DisableSyntax` (no `throw`/`null`/`while`/`asInstanceOf` — encode errors in return types, use `Option`, iterate with `Iterator`/recursion) and `OrganizeImports` (one import per line, sorted) | CI fails |
+| scoverage | Statement-coverage report (`sbt coverage test coverageAggregate`) — **reported, not gated** (no floor yet) | No (advisory) |
+| gitleaks | Scans the repo + history for committed secrets | CI fails on a finding |
+| Dependabot | Weekly update/CVE PRs for the `sbt` and `github-actions` ecosystems | — |
+| Trivy | Scans the released Docker image for CVEs (`ignore-unfixed`, fails on `CRITICAL`) | Release fails |
+
+Run the compiler/lint gates locally with `sbt clean "scalafixAll --check" test`.
+A deliberate `asInstanceOf` (e.g. an erased generic round-trip in a test) is
+allowed only with a justified `// scalafix:ok DisableSyntax.asInstanceOf`.
+
 ## Run the service
 
 ```bash
@@ -194,6 +211,9 @@ curl -X POST localhost:8080/v1/topics/orders/messages \
 > ~one window of traffic) and lives in the Topic snapshot; size the window to your
 > retry horizon rather than hours. The window is a best-effort retention bound at the
 > millisecond edge (server-clock based); the within-window retry case is exact.
+
+How often dedup fires is exposed as the counter `hermesmq_publish_deduplicated_total{topic}`
+on `/metrics` (per-node, best-effort — see [Observability](#observability)).
 
 ### Snapshots & journal retention
 
@@ -442,6 +462,7 @@ Exposed metrics:
 | `hermesmq_messages_redelivered_total` | counter | `subscription` | Redeliveries (ack-deadline expiries) |
 | `hermesmq_messages_dead_lettered_total` | counter | `subscription` | Dead-lettered messages |
 | `hermesmq_subscription_consumers` | gauge | `subscription` | Distinct named consumers active within the window |
+| `hermesmq_publish_deduplicated_total` | counter | `topic` | Publishes collapsed as duplicates (per-node, best-effort) |
 
 ```bash
 curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...}]

@@ -12,7 +12,7 @@ final class TtlConfigSpec extends AnyFunSuite:
     TtlConfig.from(ConfigFactory.parseString(overrides).withFallback(ConfigFactory.load()))
 
   test("default is off (0)") {
-    assert(load() == Right(TtlConfig(Duration.Zero)))
+    val _ = assert(load() == Right(TtlConfig(Duration.Zero)))
     assert(load().toOption.get.enabled == false)
   }
 

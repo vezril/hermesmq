@@ -10,9 +10,9 @@ final class SchemaMigratorSpec extends AnyFunSuite:
 
   test("the bundled schema DDL loads and defines the journal and read-model tables") {
     val ddl = SchemaMigrator.schemaDdl
-    assert(ddl.nonEmpty)
-    assert(ddl.contains("event_journal"))
-    assert(ddl.contains("snapshot"))
-    assert(ddl.contains("topic_stats"))
+    val _ = assert(ddl.nonEmpty)
+    val _ = assert(ddl.contains("event_journal"))
+    val _ = assert(ddl.contains("snapshot"))
+    val _ = assert(ddl.contains("topic_stats"))
     assert(ddl.contains("expiring_messages"))
   }

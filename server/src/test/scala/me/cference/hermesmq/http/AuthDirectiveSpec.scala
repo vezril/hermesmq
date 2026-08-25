@@ -1,10 +1,19 @@
 package me.cference.hermesmq.http
 
-import me.cference.hermesmq.auth.{AuthKey, Authenticator, Principal, TenantId, TenantScope}
+import me.cference.hermesmq.auth.AuthKey
+import me.cference.hermesmq.auth.Authenticator
+import me.cference.hermesmq.auth.Principal
+import me.cference.hermesmq.auth.TenantId
+import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.AuthConfig
-import me.cference.hermesmq.domain.{TopicCommand, TopicId}
-import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
-import org.apache.pekko.http.scaladsl.model.{ContentTypes, HttpEntity, StatusCodes}
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.persistence.TopicSnapshot
+import org.apache.pekko.http.scaladsl.model.ContentTypes
+import org.apache.pekko.http.scaladsl.model.HttpEntity
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.testkit.ScalatestRouteTest
@@ -34,7 +43,7 @@ final class AuthDirectiveSpec extends AnyWordSpec with Matchers with ScalatestRo
     "accept a valid bearer token and expose the principal" in {
       Get("/").addHeader(org.apache.pekko.http.scaladsl.model.headers.RawHeader("Authorization", s"Bearer $token")) ~>
         protectedRoute(cfg(true)) ~> check {
-          status shouldBe StatusCodes.OK
+          val _ = status shouldBe StatusCodes.OK
           responseAs[String] shouldBe "acme"
         }
     }
@@ -55,7 +64,7 @@ final class AuthDirectiveSpec extends AnyWordSpec with Matchers with ScalatestRo
 
     "map to the default tenant when auth is disabled" in {
       Get("/") ~> protectedRoute(cfg(false)) ~> check {
-        status shouldBe StatusCodes.OK
+        val _ = status shouldBe StatusCodes.OK
         responseAs[String] shouldBe TenantScope.DefaultTenant.value
       }
     }

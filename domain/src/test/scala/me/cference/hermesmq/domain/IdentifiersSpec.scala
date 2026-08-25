@@ -13,21 +13,21 @@ final class IdentifiersSpec extends AnyFunSuite:
   test("identifiers compare by value and work as map keys") {
     val a = TopicId.from("orders").toOption.get
     val b = TopicId.from("orders").toOption.get
-    assert(a == b)
+    val _ = assert(a == b)
     assert(Map(a -> 1).contains(b))
   }
 
   test("blank identifiers are rejected for every id type") {
-    assert(TopicId.from("   ").isLeft)
-    assert(SubscriptionId.from("").isLeft)
-    assert(MessageId.from("").isLeft)
+    val _ = assert(TopicId.from("   ").isLeft)
+    val _ = assert(SubscriptionId.from("").isLeft)
+    val _ = assert(MessageId.from("").isLeft)
     assert(AckId.from("  ").isLeft)
   }
 
   test("all four id types construct from valid input") {
-    assert(TopicId.from("t").isRight)
-    assert(SubscriptionId.from("s").isRight)
-    assert(MessageId.from("m").isRight)
+    val _ = assert(TopicId.from("t").isRight)
+    val _ = assert(SubscriptionId.from("s").isRight)
+    val _ = assert(MessageId.from("m").isRight)
     assert(AckId.from("a").isRight)
   }
 
@@ -36,6 +36,6 @@ final class IdentifiersSpec extends AnyFunSuite:
     // could not be passed where a SubscriptionId is required.
     def needsTopic(id: TopicId): String        = id.value
     def needsSubscription(id: SubscriptionId): String = id.value
-    assert(needsTopic(TopicId.from("t").toOption.get) == "t")
+    val _ = assert(needsTopic(TopicId.from("t").toOption.get) == "t")
     assert(needsSubscription(SubscriptionId.from("s").toOption.get) == "s")
   }

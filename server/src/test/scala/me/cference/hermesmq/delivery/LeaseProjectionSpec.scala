@@ -58,7 +58,7 @@ final class LeaseProjectionSpec extends AnyWordSpec with Matchers:
       val repo = InMemoryOutstandingLeaseRepository()
       index(repo, SubscriptionEvent.MessageLeased(List(ack1), t0))
       index(repo, SubscriptionEvent.AckDeadlineModified(ack1, later))
-      await(repo.overdue(t0)) shouldBe Nil
+      val _ = await(repo.overdue(t0)) shouldBe Nil
       await(repo.overdue(later)).map(_.deadline) shouldBe List(later)
     }
 

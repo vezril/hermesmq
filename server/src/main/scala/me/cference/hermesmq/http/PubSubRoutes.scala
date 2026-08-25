@@ -2,21 +2,28 @@ package me.cference.hermesmq.http
 
 import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.config.TtlConfig
-import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, PulledMessage, SubscriptionService, TopicService}
+import me.cference.hermesmq.observability.ConsumerRegistry
+import me.cference.hermesmq.observability.DedupCounter
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.PulledMessage
+import me.cference.hermesmq.persistence.SubscriptionService
+import me.cference.hermesmq.persistence.TopicService
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
-import spray.json.{DefaultJsonProtocol, RootJsonFormat}
+import spray.json.DefaultJsonProtocol
+import spray.json.RootJsonFormat
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Instant
 import java.util.UUID
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.concurrent.duration.*
-import scala.util.{Failure, Success}
+import scala.util.Failure
+import scala.util.Success
 
 /** JSON models for the pub/sub API. */
 final case class PublishRequest(
@@ -56,7 +63,8 @@ final class PubSubRoutes(
     topics: TopicService,
     subscriptions: SubscriptionService,
     ttlConfig: TtlConfig = TtlConfig.Default,
-    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+    dedup: DedupCounter = DedupCounter()
 )(using ExecutionContext):
   import PubSubJson.given
   import SprayJsonSupport.*
@@ -77,6 +85,7 @@ final class PubSubRoutes(
                   case Right(message) =>
                     onComplete(topics.submit(topicId, TopicCommand.Publish(message))) {
                       case Success(CommandReply.Published(mid, deduplicated)) =>
+                        if deduplicated then dedup.increment(topicId)
                         complete((StatusCodes.Accepted, PublishResponse(mid.value, deduplicated)))
                       case Success(CommandReply.Rejected(Rejection.TopicNotFound)) => complete(StatusCodes.NotFound)
                       case Success(CommandReply.Rejected(_))                       => complete(StatusCodes.Conflict)
@@ -239,5 +248,6 @@ object PubSubRoutes:
       topics: TopicService,
       subscriptions: SubscriptionService,
       ttlConfig: TtlConfig = TtlConfig.Default,
-      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
-  )(using ExecutionContext): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig, consumers)
+      consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+      dedup: DedupCounter = DedupCounter()
+  )(using ExecutionContext): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig, consumers, dedup)

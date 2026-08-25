@@ -1,15 +1,20 @@
 package me.cference.hermesmq.client
 
-import me.cference.hermesmq.domain.{AckId, MessageId, SubscriptionId, TopicId}
+import me.cference.hermesmq.domain.AckId
+import me.cference.hermesmq.domain.MessageId
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.TopicId
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.http.scaladsl.Http
-import org.apache.pekko.http.scaladsl.marshalling.Marshal
 import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
+import org.apache.pekko.http.scaladsl.marshalling.Marshal
 import org.apache.pekko.http.scaladsl.model.*
 import org.apache.pekko.http.scaladsl.unmarshalling.Unmarshal
-import spray.json.{DefaultJsonProtocol, RootJsonFormat}
+import spray.json.DefaultJsonProtocol
+import spray.json.RootJsonFormat
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 /** A topic as seen by a client. */
 final case class TopicInfo(topicId: TopicId, labels: Map[String, String])
@@ -71,7 +76,7 @@ final class HermesClient(baseUri: String)(using system: ActorSystem[?]):
         case StatusCodes.OK =>
           Unmarshal(resp.entity).to[TopicResponse].map(r => Some(TopicInfo(TopicId.from(r.topicId).toOption.get, r.labels)))
         case StatusCodes.NotFound =>
-          resp.discardEntityBytes(system); Future.successful(None)
+          val _ = resp.discardEntityBytes(system); Future.successful(None)
         case _ => fail(resp)
     }
 
@@ -127,7 +132,7 @@ final class HermesClient(baseUri: String)(using system: ActorSystem[?]):
   /** Succeed (discarding the body) when the status matches, otherwise fail. */
   private def expect(resp: HttpResponse, ok: StatusCode): Future[Unit] =
     if resp.status == ok then
-      resp.discardEntityBytes(system)
+      val _ = resp.discardEntityBytes(system)
       Future.unit
     else fail(resp)
 

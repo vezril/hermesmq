@@ -1,14 +1,17 @@
 package me.cference.hermesmq.delivery
 
 import me.cference.hermesmq.domain.*
-import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.persistence.TopicSnapshot
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
 import java.time.Instant
 import java.util.concurrent.ConcurrentLinkedQueue
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -38,26 +41,26 @@ final class DeadLetterRouterSpec extends AnyWordSpec with Matchers:
   "DeadLetterRouter.route" should {
     "republish an exhausted message to the configured topic with dead-letter headers, preserving the payload" in {
       val topics = CapturingTopics()
-      route(topics, Some(dlTopic), SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
+      val _ = route(topics, Some(dlTopic), SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
 
       val (topic, republished) = topics.published.asScala.head
-      topic shouldBe dlTopic
-      new String(republished.payload.toArray) shouldBe "body"
-      republished.attributes("x-dead-letter-subscription") shouldBe sub.value
-      republished.attributes("x-delivery-attempts") shouldBe "5"
-      republished.attributes("x-original-message-id") shouldBe origId.value
+      val _ = topic shouldBe dlTopic
+      val _ = new String(republished.payload.toArray) shouldBe "body"
+      val _ = republished.attributes("x-dead-letter-subscription") shouldBe sub.value
+      val _ = republished.attributes("x-delivery-attempts") shouldBe "5"
+      val _ = republished.attributes("x-original-message-id") shouldBe origId.value
       republished.attributes("k") shouldBe "v" // original attributes retained
     }
 
     "drop the message (no republish) when no dead-letter topic is configured" in {
       val topics = CapturingTopics()
-      route(topics, None, SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
+      val _ = route(topics, None, SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
       topics.published.asScala shouldBe empty
     }
 
     "ignore non-dead-letter events" in {
       val topics = CapturingTopics()
-      route(topics, Some(dlTopic), SubscriptionEvent.MessageAcknowledged(ackId))
+      val _ = route(topics, Some(dlTopic), SubscriptionEvent.MessageAcknowledged(ackId))
       topics.published.asScala shouldBe empty
     }
   }

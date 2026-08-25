@@ -3,7 +3,8 @@ package me.cference.hermesmq.delivery
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.TopicService
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 /** The outcome of routing one subscription event to the dead-letter path. */
 enum DeadLetterOutcome:

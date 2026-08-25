@@ -37,7 +37,7 @@ final class MessageStreamSpec extends ScalaTestWithActorTestKit with AnyWordSpec
       def pull(max: Int): Future[Option[List[String]]] =
         Future.successful(Some(List(s"m${calls.incrementAndGet()}")))
       // Take just 1 element; with batch=1 the source should pull ~once, not drain a backlog.
-      MessageStream.leased(pull, batch = 1, pollInterval = 50.millis).take(1).runWith(Sink.seq).futureValue shouldBe Seq("m1")
+      val _ = MessageStream.leased(pull, batch = 1, pollInterval = 50.millis).take(1).runWith(Sink.seq).futureValue shouldBe Seq("m1")
       calls.get() should be <= 2 // one satisfying pull, at most one in-flight — not an unbounded drain
     }
 
@@ -47,7 +47,7 @@ final class MessageStreamSpec extends ScalaTestWithActorTestKit with AnyWordSpec
         Future.successful { calls.incrementAndGet(); Some(Nil) }
       // Run for a short window well under a few poll intervals; polls should be bounded.
       val done = MessageStream.leased(pull, 10, pollInterval = 100.millis).takeWithin(250.millis).runWith(Sink.seq)
-      done.futureValue shouldBe empty
+      val _ = done.futureValue shouldBe empty
       calls.get() should be <= 5 // ~2-3 polls in 250ms, definitely not a spin
     }
   }

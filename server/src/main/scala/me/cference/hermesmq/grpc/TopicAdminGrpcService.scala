@@ -1,10 +1,15 @@
 package me.cference.hermesmq.grpc
 
 import me.cference.hermesmq.auth.TenantScope
-import me.cference.hermesmq.domain.{Rejection, TopicCommand, TopicId}
-import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
+import me.cference.hermesmq.domain.Rejection
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.persistence.TopicSnapshot
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 /** gRPC handler for topic administration. Implements the generated
   * [[TopicAdminService]] trait by delegating to the same [[TopicService]] the REST
@@ -19,9 +24,9 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
 
   def getTopic(in: GetTopicRequest): Future[GetTopicResponse] =
     withTopicId(in.topicId) { id =>
-      topics.query(id).map {
-        case Some(snap) => GetTopicResponse(topic = Some(toProto(snap)))
-        case None       => throw GrpcErrors.rejected(Rejection.TopicNotFound)
+      topics.query(id).flatMap {
+        case Some(snap) => Future.successful(GetTopicResponse(topic = Some(toProto(snap))))
+        case None       => Future.failed(GrpcErrors.rejected(Rejection.TopicNotFound))
       }
     }
 
@@ -45,10 +50,10 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
 
   /** Submit a write command, failing the RPC with the mapped status on rejection. */
   private def submit(id: TopicId, command: TopicCommand): Future[Unit] =
-    topics.submit(id, command).map {
-      case CommandReply.Accepted            => ()
-      case CommandReply.Rejected(rejection) => throw GrpcErrors.rejected(rejection)
-      case CommandReply.Published(_, _)     => throw new IllegalStateException("unexpected Published reply for topic admin command")
+    topics.submit(id, command).flatMap {
+      case CommandReply.Accepted            => Future.successful(())
+      case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
+      case CommandReply.Published(_, _)     => Future.failed(new IllegalStateException("unexpected Published reply for topic admin command"))
     }
 
   private def toProto(snap: TopicSnapshot): Topic =

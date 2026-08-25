@@ -49,7 +49,7 @@ final class ConsumerRegistrySpec extends AnyFunSuite:
   test("a zero window disables tracking") {
     val reg = ConsumerRegistry(Duration.Zero)
     reg.touch(sub, "worker-1", t0)
-    assert(!reg.enabled)
+    val _ = assert(!reg.enabled)
     assert(reg.activeCount(sub, t0) == 0)
   }
 

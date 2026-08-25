@@ -1,10 +1,17 @@
 package me.cference.hermesmq.persistence
 
-import me.cference.hermesmq.config.{DedupConfig, RetentionConfig}
-import me.cference.hermesmq.domain.{Topic, TopicCommand, TopicEvent, TopicId, TopicState}
+import me.cference.hermesmq.config.DedupConfig
+import me.cference.hermesmq.config.RetentionConfig
+import me.cference.hermesmq.domain.Topic
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicEvent
+import me.cference.hermesmq.domain.TopicId
+import me.cference.hermesmq.domain.TopicState
 import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.persistence.typed.PersistenceId
-import org.apache.pekko.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, RetentionCriteria}
+import org.apache.pekko.persistence.typed.scaladsl.Effect
+import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
+import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
 /** The persistent Topic aggregate. A thin `EventSourcedBehavior` that delegates
   * all business logic to the pure [[Topic]] `decide`/`evolve`, persisting events

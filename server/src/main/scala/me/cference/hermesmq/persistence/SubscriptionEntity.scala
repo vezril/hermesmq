@@ -1,10 +1,17 @@
 package me.cference.hermesmq.persistence
 
 import me.cference.hermesmq.config.RetentionConfig
-import me.cference.hermesmq.domain.{Subscription, SubscriptionCommand, SubscriptionEvent, SubscriptionId, SubscriptionState}
-import org.apache.pekko.actor.typed.{ActorRef, Behavior}
+import me.cference.hermesmq.domain.Subscription
+import me.cference.hermesmq.domain.SubscriptionCommand
+import me.cference.hermesmq.domain.SubscriptionEvent
+import me.cference.hermesmq.domain.SubscriptionId
+import me.cference.hermesmq.domain.SubscriptionState
+import org.apache.pekko.actor.typed.ActorRef
+import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.persistence.typed.PersistenceId
-import org.apache.pekko.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, RetentionCriteria}
+import org.apache.pekko.persistence.typed.scaladsl.Effect
+import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
+import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
 import java.time.Instant
 import scala.concurrent.duration.FiniteDuration

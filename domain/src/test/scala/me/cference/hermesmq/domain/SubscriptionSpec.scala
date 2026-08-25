@@ -37,7 +37,7 @@ final class SubscriptionSpec extends AnyFunSuite:
 
   test("recording a delivery adds an AVAILABLE message with no deadline") {
     val events = Subscription.decide(created, RecordDelivery(ackId, message))
-    assert(events == Right(List(MessageDelivered(ackId, message))))
+    val _ = assert(events == Right(List(MessageDelivered(ackId, message))))
     val o = evolveAll(events.toOption.get).outstanding(ackId)
     assert(o.available && o.attempts == 0)
   }
@@ -52,7 +52,7 @@ final class SubscriptionSpec extends AnyFunSuite:
 
   test("pull leases available messages and sets a deadline of now + ackDeadline") {
     val events = Subscription.decide(withAvailable, Lease(max = 10, ackDeadline = 30.seconds, now = t0))
-    assert(events == Right(List(MessageLeased(List(ackId), t0.plusSeconds(30)))))
+    val _ = assert(events == Right(List(MessageLeased(List(ackId), t0.plusSeconds(30)))))
     val o = evolveAll(events.toOption.get, withAvailable).outstanding(ackId)
     assert(o.lease == LeaseState.Leased(t0.plusSeconds(30)))
   }
@@ -77,7 +77,7 @@ final class SubscriptionSpec extends AnyFunSuite:
   test("expiring an overdue leased message returns it to AVAILABLE and increments attempts") {
     val leased = evolveAll(Subscription.decide(withAvailable, Lease(10, 30.seconds, t0)).toOption.get, withAvailable)
     val events = Subscription.decide(leased, ExpireAckDeadline(ackId, now = t0.plusSeconds(31), maxAttempts = 5))
-    assert(events == Right(List(AckDeadlineExpired(ackId, 1))))
+    val _ = assert(events == Right(List(AckDeadlineExpired(ackId, 1))))
     val o = evolveAll(events.toOption.get, leased).outstanding(ackId)
     assert(o.available && o.attempts == 1)
   }
@@ -97,7 +97,7 @@ final class SubscriptionSpec extends AnyFunSuite:
       List(MessageDelivered(ackId, message), AckDeadlineExpired(ackId, 1), AckDeadlineExpired(ackId, 2), MessageLeased(List(ackId), t0.plusSeconds(30)))
     )
     val events = Subscription.decide(base, ExpireAckDeadline(ackId, now = t0.plusSeconds(31), maxAttempts = 3))
-    assert(events == Right(List(MessageDeadLettered(ackId, message, 3))))
+    val _ = assert(events == Right(List(MessageDeadLettered(ackId, message, 3))))
     assert(!evolveAll(events.toOption.get, base).outstanding.contains(ackId))
   }
 
@@ -109,14 +109,14 @@ final class SubscriptionSpec extends AnyFunSuite:
 
   test("attempt count rebuilds from journaled AckDeadlineExpired events across recovery") {
     val recovered = evolveAll(List(MessageDelivered(ackId, message), AckDeadlineExpired(ackId, 1), AckDeadlineExpired(ackId, 2)))
-    assert(recovered.outstanding(ackId).attempts == 2)
+    val _ = assert(recovered.outstanding(ackId).attempts == 2)
     val leased = Subscription.evolve(recovered, MessageLeased(List(ackId), t0.plusSeconds(30)))
     assert(Subscription.decide(leased, ExpireAckDeadline(ackId, t0.plusSeconds(31), 3)) == Right(List(MessageDeadLettered(ackId, message, 3))))
   }
 
   test("acknowledging an outstanding message removes it") {
     val events = Subscription.decide(withAvailable, Acknowledge(ackId))
-    assert(events == Right(List(MessageAcknowledged(ackId))))
+    val _ = assert(events == Right(List(MessageAcknowledged(ackId))))
     assert(!evolveAll(events.toOption.get, withAvailable).outstanding.contains(ackId))
   }
 
@@ -134,7 +134,7 @@ final class SubscriptionSpec extends AnyFunSuite:
   private def withExpiring: SubscriptionState = Subscription.evolve(created, MessageDelivered(ackId, ttlMessage))
 
   test("Lease does not return an available message whose TTL has passed") {
-    assert(Subscription.decide(withExpiring, Lease(10, 30.seconds, now = expireAt)) == Right(Nil))
+    val _ = assert(Subscription.decide(withExpiring, Lease(10, 30.seconds, now = expireAt)) == Right(Nil))
     assert(Subscription.decide(withExpiring, Lease(10, 30.seconds, now = expireAt.plusSeconds(1))) == Right(Nil))
   }
 
@@ -145,7 +145,7 @@ final class SubscriptionSpec extends AnyFunSuite:
 
   test("ExpireMessage on an outstanding expired message emits MessageExpired and removes it") {
     val events = Subscription.decide(withExpiring, ExpireMessage(ackId, now = expireAt))
-    assert(events == Right(List(MessageExpired(ackId))))
+    val _ = assert(events == Right(List(MessageExpired(ackId))))
     assert(!evolveAll(events.toOption.get, withExpiring).outstanding.contains(ackId))
   }
 

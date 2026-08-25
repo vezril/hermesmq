@@ -1,14 +1,19 @@
 package me.cference.hermesmq.grpc
 
 import io.grpc.Status
-import me.cference.hermesmq.domain.{Rejection, TopicCommand, TopicId}
-import me.cference.hermesmq.persistence.{CommandReply, TopicService, TopicSnapshot}
+import me.cference.hermesmq.domain.Rejection
+import me.cference.hermesmq.domain.TopicCommand
+import me.cference.hermesmq.domain.TopicId
+import me.cference.hermesmq.persistence.CommandReply
+import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.persistence.TopicSnapshot
 import org.apache.pekko.grpc.GrpcServiceException
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 
 /** Tests the topic-admin gRPC handler against stub services (no socket). */
@@ -30,7 +35,7 @@ final class TopicAdminGrpcServiceSpec extends AnyWordSpec with Matchers:
 
   "TopicAdminGrpcService" should {
     "create a topic and return an empty response" in {
-      await(service(topics()).createTopic(CreateTopicRequest(topicId = "orders", labels = Map("team" -> "pay"))))
+      val _ = await(service(topics()).createTopic(CreateTopicRequest(topicId = "orders", labels = Map("team" -> "pay"))))
       succeed
     }
 
@@ -46,7 +51,7 @@ final class TopicAdminGrpcServiceSpec extends AnyWordSpec with Matchers:
     "return a topic with its labels on get" in {
       val snap = TopicSnapshot(TopicId.from("orders").toOption.get, Map("team" -> "pay"))
       val resp = await(service(topics(snap = Some(snap))).getTopic(GetTopicRequest(topicId = "orders")))
-      resp.topic.map(_.topicId) shouldBe Some("orders")
+      val _ = resp.topic.map(_.topicId) shouldBe Some("orders")
       resp.topic.map(_.labels) shouldBe Some(Map("team" -> "pay"))
     }
 
@@ -65,7 +70,7 @@ final class TopicAdminGrpcServiceSpec extends AnyWordSpec with Matchers:
     }
 
     "delete a topic and return an empty response" in {
-      await(service(topics()).deleteTopic(DeleteTopicRequest(topicId = "orders")))
+      val _ = await(service(topics()).deleteTopic(DeleteTopicRequest(topicId = "orders")))
       succeed
     }
 

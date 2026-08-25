@@ -1,15 +1,23 @@
 package me.cference.hermesmq.grpc
 
-import me.cference.hermesmq.auth.{Authenticator, TenantScope, TenantScopedSubscriptionService, TenantScopedTopicService}
-import me.cference.hermesmq.config.{AuthConfig, StreamConfig, TtlConfig}
+import me.cference.hermesmq.auth.Authenticator
+import me.cference.hermesmq.auth.TenantScope
+import me.cference.hermesmq.auth.TenantScopedSubscriptionService
+import me.cference.hermesmq.auth.TenantScopedTopicService
+import me.cference.hermesmq.config.AuthConfig
+import me.cference.hermesmq.config.StreamConfig
+import me.cference.hermesmq.config.TtlConfig
 import me.cference.hermesmq.observability.ConsumerRegistry
-import me.cference.hermesmq.persistence.{SubscriptionService, TopicService}
+import me.cference.hermesmq.observability.DedupCounter
+import me.cference.hermesmq.persistence.SubscriptionService
+import me.cference.hermesmq.persistence.TopicService
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.grpc.scaladsl.Metadata
 import org.apache.pekko.stream.scaladsl.Source
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 /** Metadata-aware topic-admin gRPC handler: authenticates from call metadata,
   * enforces the `admin` scope on writes, and delegates to a per-call
@@ -49,7 +57,8 @@ final class PubSubPowerApi(
     config: AuthConfig,
     streamConfig: StreamConfig = StreamConfig.Default,
     ttlConfig: TtlConfig = TtlConfig.Default,
-    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero)
+    consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
+    dedup: DedupCounter = DedupCounter()
 )(using ExecutionContext, ActorSystem)
     extends PubSubServicePowerApi:
 
@@ -80,7 +89,8 @@ final class PubSubPowerApi(
       new TenantScopedSubscriptionService(baseSubs, scope, p.tenant),
       streamConfig,
       ttlConfig,
-      consumers
+      consumers,
+      dedup
     )
 
   private def authed[A](metadata: Metadata)(f: PubSubGrpcService => Future[A]): Future[A] =

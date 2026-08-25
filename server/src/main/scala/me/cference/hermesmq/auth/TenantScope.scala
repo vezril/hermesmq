@@ -40,7 +40,7 @@ object TenantScope:
   val Separator: Char = '~'
 
   /** A sensible default tenant name used when the config does not specify one. */
-  val DefaultTenant: TenantId = TenantId.from("default").toOption.getOrElse(throw new IllegalStateException("default tenant"))
+  val DefaultTenant: TenantId = TenantId.from("default").toOption.getOrElse(sys.error("default tenant"))
 
   /** Validate an external id supplied by a caller: it must not contain the
     * reserved separator (which would let it escape its tenant namespace).

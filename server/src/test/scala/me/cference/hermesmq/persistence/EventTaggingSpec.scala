@@ -30,9 +30,9 @@ final class EventTaggingSpec extends AnyWordSpec with Matchers:
     }
 
     "keep the created tag only on SubscriptionCreated and the lease tag on lease-lifecycle events" in {
-      SubscriptionEntity.tagsFor(SubscriptionEvent.SubscriptionCreated(sub, topic)) shouldBe
+      val _ = SubscriptionEntity.tagsFor(SubscriptionEvent.SubscriptionCreated(sub, topic)) shouldBe
         Set(SubscriptionEntity.CreatedTag, SubscriptionEntity.StatsTag)
-      SubscriptionEntity.tagsFor(SubscriptionEvent.MessageDelivered(ackId, msg)) shouldBe Set(SubscriptionEntity.StatsTag)
+      val _ = SubscriptionEntity.tagsFor(SubscriptionEvent.MessageDelivered(ackId, msg)) shouldBe Set(SubscriptionEntity.StatsTag)
       SubscriptionEntity.tagsFor(SubscriptionEvent.MessageAcknowledged(ackId)) shouldBe
         Set(SubscriptionEntity.LeaseTag, SubscriptionEntity.StatsTag)
     }
@@ -40,8 +40,8 @@ final class EventTaggingSpec extends AnyWordSpec with Matchers:
 
   "Topic event tags" should {
     "tag create/publish/delete with the stats tag, and keep the message tag on publish" in {
-      TopicEntity.tagsFor(TopicEvent.MessagePublished(msg)) shouldBe Set(TopicEntity.MessageTag, TopicEntity.StatsTag)
-      TopicEntity.tagsFor(TopicEvent.TopicCreated(topic)) shouldBe Set(TopicEntity.StatsTag)
+      val _ = TopicEntity.tagsFor(TopicEvent.MessagePublished(msg)) shouldBe Set(TopicEntity.MessageTag, TopicEntity.StatsTag)
+      val _ = TopicEntity.tagsFor(TopicEvent.TopicCreated(topic)) shouldBe Set(TopicEntity.StatsTag)
       TopicEntity.tagsFor(TopicEvent.TopicDeleted(topic)) shouldBe Set(TopicEntity.StatsTag)
     }
 

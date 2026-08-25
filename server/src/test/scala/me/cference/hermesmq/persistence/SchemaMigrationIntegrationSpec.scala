@@ -1,6 +1,7 @@
 package me.cference.hermesmq.persistence
 
-import com.typesafe.config.{Config, ConfigFactory}
+import com.typesafe.config.Config
+import com.typesafe.config.ConfigFactory
 import me.cference.hermesmq.config.DbConfig
 import me.cference.hermesmq.domain.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
@@ -53,8 +54,8 @@ final class SchemaMigrationIntegrationSpec extends AnyWordSpec with Matchers wit
       testKit = ActorTestKit("schema-mig-it", config)
 
   override def afterAll(): Unit =
-    if testKit != null then testKit.shutdownTestKit()
-    if container != null then container.stop()
+    Option(testKit).foreach(_.shutdownTestKit())
+    Option(container).foreach(_.stop())
 
   private def tableExists(name: String): Boolean =
     val conn = DriverManager.getConnection(dbConfig.jdbcUrl, dbConfig.user, dbConfig.password)
@@ -65,30 +66,30 @@ final class SchemaMigrationIntegrationSpec extends AnyWordSpec with Matchers wit
 
   "Schema self-migration against a fresh PostgreSQL" should {
     "provision the journal + read-model tables and be idempotent on re-run" taggedAs PostgresIT in {
-      assume(dockerAvailable, "Docker is not available")
+      val _ = assume(dockerAvailable, "Docker is not available")
 
-      tableExists("event_journal") shouldBe false // empty database to start
-      SchemaMigrator.migrate(dbConfig) shouldBe Right(())
-      tableExists("event_journal") shouldBe true
-      tableExists("snapshot") shouldBe true
-      tableExists("topic_stats") shouldBe true
-      tableExists("expiring_messages") shouldBe true
+      val _ = tableExists("event_journal") shouldBe false // empty database to start
+      val _ = SchemaMigrator.migrate(dbConfig) shouldBe Right(())
+      val _ = tableExists("event_journal") shouldBe true
+      val _ = tableExists("snapshot") shouldBe true
+      val _ = tableExists("topic_stats") shouldBe true
+      val _ = tableExists("expiring_messages") shouldBe true
 
       // Re-running over the now-provisioned schema is a harmless no-op.
-      SchemaMigrator.migrate(dbConfig) shouldBe Right(())
+      val _ = SchemaMigrator.migrate(dbConfig) shouldBe Right(())
       tableExists("event_journal") shouldBe true
     }
 
     "support create + publish end-to-end against a migrator-provisioned database" taggedAs PostgresIT in {
-      assume(dockerAvailable, "Docker is not available")
+      val _ = assume(dockerAvailable, "Docker is not available")
 
-      SchemaMigrator.migrate(dbConfig) shouldBe Right(())
+      val _ = SchemaMigrator.migrate(dbConfig) shouldBe Right(())
       val topicId = TopicId.from("mig-e2e").toOption.get
       val probe   = testKit.createTestProbe[CommandReply]()
       val entity  = testKit.spawn(TopicEntity(topicId))
 
       entity ! TopicEntityCommand.Submit(TopicCommand.CreateTopic(topicId), probe.ref)
-      probe.expectMessage(20.seconds, CommandReply.Accepted)
+      val _ = probe.expectMessage(20.seconds, CommandReply.Accepted)
 
       val msg = Message
         .from(MessageId.from("m-1").toOption.get, "hi".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z"))

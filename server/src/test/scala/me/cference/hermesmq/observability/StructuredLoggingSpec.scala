@@ -1,8 +1,9 @@
 package me.cference.hermesmq.observability
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.joran.JoranConfigurator
 import ch.qos.logback.classic.spi.LoggingEvent
-import ch.qos.logback.classic.{Level, LoggerContext}
 import net.logstash.logback.encoder.LogstashEncoder
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
@@ -29,16 +30,16 @@ final class StructuredLoggingSpec extends AnyFunSuite with Matchers:
     event.setMDCPropertyMap(java.util.Map.of("tenant", "acme"))
 
     val line = new String(encoder.encode(event), "UTF-8")
-    line.count(_ == '\n') should be <= 1 // single-line JSON
+    val _ = line.count(_ == '\n') should be <= 1 // single-line JSON
     val json = line.parseJson.asJsObject
 
-    json.fields("level") shouldBe JsString("ERROR")
-    json.fields("service") shouldBe JsString("hermesmq")
-    json.fields("logger_name") shouldBe JsString("me.cference.hermesmq.Sample")
-    json.fields("thread_name") shouldBe JsString("worker-1")
-    json.fields("message") shouldBe JsString("boom")
-    json.fields.contains("@timestamp") shouldBe true
-    json.fields.contains("stack_trace") shouldBe true // exception rendered
+    val _ = json.fields("level") shouldBe JsString("ERROR")
+    val _ = json.fields("service") shouldBe JsString("hermesmq")
+    val _ = json.fields("logger_name") shouldBe JsString("me.cference.hermesmq.Sample")
+    val _ = json.fields("thread_name") shouldBe JsString("worker-1")
+    val _ = json.fields("message") shouldBe JsString("boom")
+    val _ = json.fields.contains("@timestamp") shouldBe true
+    val _ = json.fields.contains("stack_trace") shouldBe true // exception rendered
     json.fields("tenant") shouldBe JsString("acme")    // MDC as a top-level field
   }
 
