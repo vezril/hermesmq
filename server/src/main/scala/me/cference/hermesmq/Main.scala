@@ -15,6 +15,7 @@ import me.cference.hermesmq.config.ConsumersConfig
 import me.cference.hermesmq.config.DbConfig
 import me.cference.hermesmq.config.DedupConfig
 import me.cference.hermesmq.config.GrpcConfig
+import me.cference.hermesmq.config.ProducersConfig
 import me.cference.hermesmq.config.RedeliveryConfig
 import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.config.ServiceConfig
@@ -44,6 +45,7 @@ import me.cference.hermesmq.observability.DedupCounter
 import me.cference.hermesmq.observability.JdbcSubscriptionStatsRepository
 import me.cference.hermesmq.observability.JdbcTopicStatsRepository
 import me.cference.hermesmq.observability.ObservabilityRoutes
+import me.cference.hermesmq.observability.ProducerRegistry
 import me.cference.hermesmq.observability.SubscriptionStatsProjection
 import me.cference.hermesmq.observability.TopicStatsProjection
 import me.cference.hermesmq.persistence.PersistenceHealth
@@ -84,14 +86,15 @@ object Main:
         ttlConfig        <- TtlConfig.from(rawConfig)
         dedupConfig      <- DedupConfig.from(rawConfig)
         consumersConfig  <- ConsumersConfig.from(rawConfig)
-      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig, consumersConfig)
+        producersConfig  <- ProducersConfig.from(rawConfig)
+      yield (serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig, consumersConfig, producersConfig)
 
     loaded match
       case Left(error) =>
         System.err.println(s"Configuration error: ${error.message}")
         sys.exit(1)
 
-      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig, consumersConfig)) =>
+      case Right((serviceConfig, grpcConfig, dbConfig, redeliveryConfig, retentionConfig, authConfig, streamConfig, ttlConfig, dedupConfig, consumersConfig, producersConfig)) =>
         // Apply the bundled schema before anything touches the database, so
         // projections and aggregates never race a missing table. Idempotent, so
         // a no-op over an already-provisioned DB. Fail fast, like a config error.
@@ -197,16 +200,17 @@ object Main:
           // Shared, per-node registry of active named consumers (best-effort).
           val consumerRegistry = ConsumerRegistry(consumersConfig.activityWindow)
           val dedupCounter     = DedupCounter()
+          val producerRegistry = ProducerRegistry(producersConfig.activityWindow)
 
           // REST: /metrics is public; /v1 requires auth and is tenant-scoped.
-          val observability = ObservabilityRoutes(subStatsRepo, topicStatsRepo, consumers = consumerRegistry, dedup = dedupCounter)
+          val observability = ObservabilityRoutes(subStatsRepo, topicStatsRepo, consumers = consumerRegistry, dedup = dedupCounter, producers = producerRegistry)
           val apiRoutes =
             observability.metricsRoute ~
               Auth.authenticate(authenticator, authConfig) { principal =>
                 val scopedTopics = TenantScopedTopicService(topicService, tenantScope, principal.tenant)
                 val scopedSubs   = TenantScopedSubscriptionService(subscriptionService, tenantScope, principal.tenant)
                 TopicAdminRoutes(scopedTopics, principal).routes ~
-                  PubSubRoutes(scopedTopics, scopedSubs, ttlConfig, consumerRegistry, dedupCounter).routes ~
+                  PubSubRoutes(scopedTopics, scopedSubs, ttlConfig, consumerRegistry, dedupCounter, producerRegistry).routes ~
                   observability.listings(principal, tenantScope)
               }
 
@@ -228,7 +232,7 @@ object Main:
           // gRPC endpoint (HTTP/2): metadata-aware power APIs authenticate + tenant-scope.
           given org.apache.pekko.actor.ActorSystem = ctx.system.classicSystem
           val topicAdminGrpc = TopicAdminPowerApi(topicService, authenticator, tenantScope, authConfig)
-          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig, consumerRegistry, dedupCounter)
+          val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig, consumerRegistry, dedupCounter, producerRegistry)
           GrpcServer.start(ctx.system, grpcConfig, topicAdminGrpc, pubSubGrpc).onComplete {
             case Success(binding) =>
               bootLog.info("HermesMQ gRPC listening on {}", binding.localAddress)

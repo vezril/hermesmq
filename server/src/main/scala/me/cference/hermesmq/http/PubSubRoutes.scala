@@ -5,6 +5,7 @@ import me.cference.hermesmq.config.TtlConfig
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.observability.ConsumerRegistry
 import me.cference.hermesmq.observability.DedupCounter
+import me.cference.hermesmq.observability.ProducerRegistry
 import me.cference.hermesmq.persistence.CommandReply
 import me.cference.hermesmq.persistence.PulledMessage
 import me.cference.hermesmq.persistence.SubscriptionService
@@ -30,7 +31,8 @@ final case class PublishRequest(
     payload: String,
     attributes: Option[Map[String, String]],
     ttlSeconds: Option[Int] = None,
-    idempotencyKey: Option[String] = None
+    idempotencyKey: Option[String] = None,
+    producerId: Option[String] = None
 )
 final case class PublishResponse(messageId: String, deduplicated: Boolean = false)
 final case class CreateSubscriptionRequest(subscriptionId: String, topicId: String)
@@ -43,7 +45,7 @@ final case class ModifyAckDeadlineRequest(ackIds: List[String], ackDeadlineSecon
 final case class ModifyAckDeadlineResponse(modified: List[String], unknown: List[String])
 
 object PubSubJson extends DefaultJsonProtocol:
-  given RootJsonFormat[PublishRequest]            = jsonFormat4(PublishRequest.apply)
+  given RootJsonFormat[PublishRequest]            = jsonFormat5(PublishRequest.apply)
   given RootJsonFormat[PublishResponse]           = jsonFormat2(PublishResponse.apply)
   given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat2(CreateSubscriptionRequest.apply)
   given RootJsonFormat[PullRequest]               = jsonFormat2(PullRequest.apply)
@@ -64,7 +66,8 @@ final class PubSubRoutes(
     subscriptions: SubscriptionService,
     ttlConfig: TtlConfig = TtlConfig.Default,
     consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
-    dedup: DedupCounter = DedupCounter()
+    dedup: DedupCounter = DedupCounter(),
+    producers: ProducerRegistry = ProducerRegistry(scala.concurrent.duration.Duration.Zero)
 )(using ExecutionContext):
   import PubSubJson.given
   import SprayJsonSupport.*
@@ -80,6 +83,7 @@ final class PubSubRoutes(
             TenantScope.validateExternalId(rawTopic).flatMap(TopicId.from) match
               case Left(err) => complete(StatusCodes.BadRequest, err.message)
               case Right(topicId) =>
+                producers.touch(topicId, req.producerId.getOrElse(""), Instant.now())
                 buildMessage(req) match
                   case Left(err) => complete(StatusCodes.BadRequest, err.message)
                   case Right(message) =>
@@ -249,5 +253,6 @@ object PubSubRoutes:
       subscriptions: SubscriptionService,
       ttlConfig: TtlConfig = TtlConfig.Default,
       consumers: ConsumerRegistry = ConsumerRegistry(scala.concurrent.duration.Duration.Zero),
-      dedup: DedupCounter = DedupCounter()
-  )(using ExecutionContext): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig, consumers, dedup)
+      dedup: DedupCounter = DedupCounter(),
+      producers: ProducerRegistry = ProducerRegistry(scala.concurrent.duration.Duration.Zero)
+  )(using ExecutionContext): PubSubRoutes = new PubSubRoutes(topics, subscriptions, ttlConfig, consumers, dedup, producers)
