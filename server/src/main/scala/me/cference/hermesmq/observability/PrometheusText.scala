@@ -30,7 +30,8 @@ object PrometheusText:
       topics: List[TopicStats],
       now: Instant,
       consumerCounts: Map[SubscriptionId, Int] = Map.empty,
-      dedupCounts: Map[TopicId, Long] = Map.empty
+      dedupCounts: Map[TopicId, Long] = Map.empty,
+      producerCounts: Map[TopicId, Int] = Map.empty
   ): String =
     List(
       block(
@@ -74,5 +75,11 @@ object PrometheusText:
         "Total publishes collapsed as duplicates per topic.",
         "counter",
         dedupCounts.toList.sortBy((topic, _) => topic.value).map((topic, count) => ("topic", topic.value, count))
+      ),
+      block(
+        "hermesmq_topic_producers",
+        "Distinct named producers active within the configured window per topic.",
+        "gauge",
+        producerCounts.toList.sortBy((topic, _) => topic.value).map((topic, count) => ("topic", topic.value, count.toLong))
       )
     ).mkString

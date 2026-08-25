@@ -122,6 +122,14 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
           counter.counts shouldBe Map(TopicId.from("orders").toOption.get -> 1L)
         }
     }
+    "record a named producer as active on publish" in {
+      val reg = me.cference.hermesmq.observability.ProducerRegistry(1.minute)
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi","producerId":"ingest-7"}""")) ~>
+        Route.seal(PubSubRoutes(topicStub(), subStub(), producers = reg).routes) ~> check {
+          val _ = status shouldBe StatusCodes.Accepted
+          reg.activeCount(TopicId.from("orders").toOption.get, Instant.now()) shouldBe 1
+        }
+    }
     "return 404 when the topic does not exist" in {
       Post("/v1/topics/ghost/messages", json("""{"payload":"hi"}""")) ~>
         routes(topics = topicStub(CommandReply.Rejected(Rejection.TopicNotFound))) ~> check {
