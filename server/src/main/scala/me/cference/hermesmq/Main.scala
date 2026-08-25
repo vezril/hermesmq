@@ -210,12 +210,19 @@ object Main:
                   observability.listings(principal, tenantScope)
               }
 
+          // These callbacks run off the actor thread (on the ExecutionContext), so
+          // they must not touch ActorContext (`ctx.log`/`ctx.system` are guarded and
+          // throw from the outside). Capture a plain SLF4J logger and the system
+          // reference here, on the actor thread, and use those in the callbacks.
+          val bootLog     = org.slf4j.LoggerFactory.getLogger("me.cference.hermesmq.Main")
+          val typedSystem = ctx.system
+
           HttpServer.start(ctx.system, serviceConfig, AppInfo.Version, readiness, apiRoutes).onComplete {
             case Success(binding) =>
-              ctx.log.info("HermesMQ {} listening on {}", AppInfo.Version, binding.localAddress)
+              bootLog.info("HermesMQ {} listening on {}", AppInfo.Version, binding.localAddress)
             case Failure(ex) =>
-              ctx.log.error("Failed to bind HTTP server; shutting down", ex)
-              ctx.system.terminate()
+              bootLog.error("Failed to bind HTTP server; shutting down", ex)
+              typedSystem.terminate()
           }
 
           // gRPC endpoint (HTTP/2): metadata-aware power APIs authenticate + tenant-scope.
@@ -224,10 +231,10 @@ object Main:
           val pubSubGrpc     = PubSubPowerApi(topicService, subscriptionService, authenticator, tenantScope, authConfig, streamConfig, ttlConfig, consumerRegistry, dedupCounter)
           GrpcServer.start(ctx.system, grpcConfig, topicAdminGrpc, pubSubGrpc).onComplete {
             case Success(binding) =>
-              ctx.log.info("HermesMQ gRPC listening on {}", binding.localAddress)
+              bootLog.info("HermesMQ gRPC listening on {}", binding.localAddress)
             case Failure(ex) =>
-              ctx.log.error("Failed to bind gRPC server; shutting down", ex)
-              ctx.system.terminate()
+              bootLog.error("Failed to bind gRPC server; shutting down", ex)
+              typedSystem.terminate()
           }
 
           Behaviors.empty
