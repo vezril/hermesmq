@@ -75,7 +75,7 @@ jobs:
       # on base-image noise with no available fix; fail only on CRITICAL (tunable
       # to HIGH later). Validated on the release run (release.yml isn't PR-tested).
       - name: Scan image for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: docker.io/calvinference/hermesmq:${{ env.IMAGE_TAG }}
           format: table
