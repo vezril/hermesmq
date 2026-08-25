@@ -22,6 +22,19 @@ final class StatsRepositorySpec extends AnyWordSpec with Matchers:
   private def await[A](f: => scala.concurrent.Future[A]): A = Await.result(f, 3.seconds)
 
   "Subscription stats" should {
+    "drop a deleted subscription from the listing" in {
+      // Otherwise a deleted subscription lingers in GET /v1/subscriptions with a
+      // frozen backlog nothing will ever acknowledge, and it keeps counting
+      // toward any consumer-count a producer reads.
+      val repo = InMemorySubscriptionStatsRepository()
+      SubscriptionStatsFold(repo, sub, SubscriptionEvent.SubscriptionCreated(sub, topic))
+      SubscriptionStatsFold(repo, sub, SubscriptionEvent.MessageDelivered(ack(1), msgAt(t0)))
+      val _ = await(repo.list()) should have size 1
+
+      SubscriptionStatsFold(repo, sub, SubscriptionEvent.SubscriptionDeleted(sub, topic))
+      await(repo.list()) shouldBe empty
+    }
+
     "count backlog as delivered minus acked/dead-lettered" in {
       val repo = InMemorySubscriptionStatsRepository()
       SubscriptionStatsFold(repo, sub, SubscriptionEvent.SubscriptionCreated(sub, topic))

@@ -39,6 +39,20 @@ final class EventSerializationSpec
     .get
 
   "Domain events" should {
+    "round-trip SubscriptionDeleted" in {
+      val e = SubscriptionEvent.SubscriptionDeleted(subId, topicId)
+      roundTrip[SubscriptionEvent](e) shouldBe e
+    }
+    "round-trip a deleted SubscriptionState" in {
+      // The `deleted` flag has to survive a snapshot, or a restart resurrects
+      // the subscription and it starts receiving messages again.
+      val deleted = Subscription.evolve(
+        Subscription.evolve(Subscription.empty, SubscriptionEvent.SubscriptionCreated(subId, topicId)),
+        SubscriptionEvent.SubscriptionDeleted(subId, topicId)
+      )
+      val _ = roundTrip[SubscriptionState](deleted).deleted shouldBe true
+      roundTrip[SubscriptionState](deleted).exists shouldBe false
+    }
     "round-trip TopicCreated" in {
       roundTrip[TopicEvent](TopicEvent.TopicCreated(topicId)) shouldBe TopicEvent.TopicCreated(topicId)
     }

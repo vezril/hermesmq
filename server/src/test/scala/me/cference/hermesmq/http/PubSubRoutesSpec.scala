@@ -158,6 +158,42 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
     }
   }
 
+  "DELETE /v1/subscriptions/{id}" should {
+    "delete a subscription (204)" in {
+      Delete("/v1/subscriptions/s1") ~> routes(subs = subStub()) ~> check {
+        status shouldBe StatusCodes.NoContent
+      }
+    }
+    "return 404 when the subscription is already gone" in {
+      // A rejection here is only ever SubscriptionNotFound, and deleting
+      // something that is not there must not read as success.
+      Delete("/v1/subscriptions/s1") ~>
+        routes(subs = subStub(CommandReply.Rejected(Rejection.SubscriptionNotFound))) ~> check {
+          status shouldBe StatusCodes.NotFound
+        }
+    }
+    "reject a blank subscription id" in {
+      // A space is a valid path segment and a blank id; the route must reject it
+      // rather than address whatever entity a blank id would shard to.
+      Delete("/v1/subscriptions/%20") ~> routes(subs = subStub()) ~> check {
+        status shouldBe StatusCodes.BadRequest
+      }
+    }
+    "submit a DeleteSubscription command" in {
+      // Guards against the route being wired to the wrong command, which no
+      // status-code assertion would notice.
+      var submitted: Option[SubscriptionCommand] = None
+      val capturing = new SubscriptionService:
+        def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
+          submitted = Some(command); Future.successful(CommandReply.Accepted)
+        def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(Some(Nil))
+      Delete("/v1/subscriptions/s1") ~> routes(subs = capturing) ~> check {
+        val _ = status shouldBe StatusCodes.NoContent
+        submitted shouldBe Some(SubscriptionCommand.DeleteSubscription)
+      }
+    }
+  }
+
   "POST /v1/subscriptions/{id}/pull" should {
     "return 200 with outstanding messages" in {
       Post("/v1/subscriptions/s1/pull", json("""{"max":10}""")) ~>
