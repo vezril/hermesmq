@@ -36,6 +36,7 @@ final case class SubscriptionStats(
   */
 trait SubscriptionStatsSink:
   def registerSubscription(subscriptionId: SubscriptionId, topicId: TopicId): Unit
+  def unregisterSubscription(subscriptionId: SubscriptionId): Unit
   def delivered(subscriptionId: SubscriptionId, ackId: AckId, deliveredAt: Instant): Unit
   def removed(subscriptionId: SubscriptionId, ackId: AckId): Unit
   def redelivered(subscriptionId: SubscriptionId): Unit
@@ -55,6 +56,9 @@ object SubscriptionStatsFold:
       case SubscriptionEvent.MessageDeadLettered(ackId, _, _)    =>
         sink.deadLettered(subscriptionId); sink.removed(subscriptionId, ackId)
       case SubscriptionEvent.MessageExpired(ackId)               => sink.removed(subscriptionId, ackId)
+      // A deleted subscription leaves the listing entirely rather than lingering
+      // with a frozen backlog nothing will ever acknowledge.
+      case SubscriptionEvent.SubscriptionDeleted(_, _)           => sink.unregisterSubscription(subscriptionId)
       case _ => () // MessageLeased / AckDeadlineModified don't change these stats
 
 /** Read side of the subscription stats read model, serving the admin listing and
@@ -77,6 +81,11 @@ final class InMemorySubscriptionStatsRepository(using ExecutionContext)
   def registerSubscription(subscriptionId: SubscriptionId, topicId: TopicId): Unit =
     val _ = topics.updateAndGet(_.updated(subscriptionId, topicId))
     val _ = counters.updateAndGet(m => if m.contains(subscriptionId) then m else m.updated(subscriptionId, (0L, 0L)))
+
+  def unregisterSubscription(subscriptionId: SubscriptionId): Unit =
+    val _ = topics.updateAndGet(_.removed(subscriptionId))
+    val _ = counters.updateAndGet(_.removed(subscriptionId))
+    val _ = backlog.updateAndGet(_.filterNot(_._1._1 == subscriptionId))
 
   def delivered(subscriptionId: SubscriptionId, ackId: AckId, deliveredAt: Instant): Unit =
     val _ = backlog.updateAndGet(_.updated((subscriptionId, ackId), deliveredAt))
@@ -118,6 +127,15 @@ final class JdbcSubscriptionStatsSink(conn: Connection) extends SubscriptionStat
         |VALUES (?, ?, 0, 0) ON CONFLICT (subscription_id) DO UPDATE SET topic_id = EXCLUDED.topic_id""".stripMargin
     )
     ps.setString(1, subscriptionId.value); ps.setString(2, topicId.value); val _ = ps.executeUpdate()
+
+  def unregisterSubscription(subscriptionId: SubscriptionId): Unit =
+    // The backlog rows go first: subscription_backlog references the stats row,
+    // and leaving orphans would keep the deleted subscription's messages in the
+    // oldest-unacked figures.
+    val clearBacklog = conn.prepareStatement("DELETE FROM subscription_backlog WHERE subscription_id = ?")
+    clearBacklog.setString(1, subscriptionId.value); val _ = clearBacklog.executeUpdate()
+    val ps = conn.prepareStatement("DELETE FROM subscription_stats WHERE subscription_id = ?")
+    ps.setString(1, subscriptionId.value); val _ = ps.executeUpdate()
 
   def delivered(subscriptionId: SubscriptionId, ackId: AckId, deliveredAt: Instant): Unit =
     val ps = conn.prepareStatement(

@@ -44,7 +44,12 @@ object SubscriptionEntity:
     */
   def tagsFor(event: SubscriptionEvent): Set[String] =
     val specific = event match
+      // Deletion carries the index tag alongside creation: the routing index
+      // has to see both ends of the lifecycle, or a deleted subscription keeps
+      // being handed messages it can never acknowledge. The tag STRING is not
+      // renamed despite now covering both — projections track offsets by it.
       case _: SubscriptionEvent.SubscriptionCreated => Set(CreatedTag)
+      case _: SubscriptionEvent.SubscriptionDeleted => Set(CreatedTag)
       case _: SubscriptionEvent.MessageDelivered    => Set.empty[String]
       case _                                        => Set(LeaseTag)
     specific + StatsTag

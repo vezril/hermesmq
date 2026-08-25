@@ -109,6 +109,12 @@ object JsonFormats extends DefaultJsonProtocol:
         JsObject("type" -> JsString("MessageDeadLettered"), "ackId" -> ackId.toJson, "message" -> message.toJson, "attempt" -> attempt.toJson)
       case SubscriptionEvent.MessageExpired(ackId) =>
         JsObject("type" -> JsString("MessageExpired"), "ackId" -> ackId.toJson)
+      case SubscriptionEvent.SubscriptionDeleted(subscriptionId, topicId) =>
+        JsObject(
+          "type"           -> JsString("SubscriptionDeleted"),
+          "subscriptionId" -> subscriptionId.toJson,
+          "topicId"        -> topicId.toJson
+        )
     def read(json: JsValue): SubscriptionEvent =
       val o = json.asJsObject
       o.fields("type").convertTo[String] match
@@ -132,6 +138,11 @@ object JsonFormats extends DefaultJsonProtocol:
           )
         case "MessageExpired" =>
           SubscriptionEvent.MessageExpired(o.fields("ackId").convertTo[AckId])
+        case "SubscriptionDeleted" =>
+          SubscriptionEvent.SubscriptionDeleted(
+            o.fields("subscriptionId").convertTo[SubscriptionId],
+            o.fields("topicId").convertTo[TopicId]
+          )
         case other => deserializationError(s"unknown SubscriptionEvent type: $other")
 
   // --- Aggregate state (snapshot) formats -----------------------------------
@@ -187,12 +198,16 @@ object JsonFormats extends DefaultJsonProtocol:
       JsObject(
         "subscriptionId" -> s.subscriptionId.toJson,
         "topicId"        -> s.topicId.toJson,
-        "outstanding"    -> s.outstanding.toJson
+        "outstanding"    -> s.outstanding.toJson,
+        "deleted"        -> JsBoolean(s.deleted)
       )
     def read(json: JsValue): SubscriptionState =
       val o = json.asJsObject
       SubscriptionState(
         o.fields.getOrElse("subscriptionId", JsNull).convertTo[Option[SubscriptionId]],
         o.fields.getOrElse("topicId", JsNull).convertTo[Option[TopicId]],
-        o.fields.getOrElse("outstanding", JsObject()).convertTo[Map[AckId, Outstanding]]
+        o.fields.getOrElse("outstanding", JsObject()).convertTo[Map[AckId, Outstanding]],
+        // Snapshots written before delete existed have no field; they are all
+        // live subscriptions, so absent reads as false.
+        o.fields.get("deleted").exists(_.convertTo[Boolean])
       )

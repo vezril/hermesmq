@@ -33,8 +33,12 @@ final class EventTaggingSpec extends AnyWordSpec with Matchers:
       val _ = SubscriptionEntity.tagsFor(SubscriptionEvent.SubscriptionCreated(sub, topic)) shouldBe
         Set(SubscriptionEntity.CreatedTag, SubscriptionEntity.StatsTag)
       val _ = SubscriptionEntity.tagsFor(SubscriptionEvent.MessageDelivered(ackId, msg)) shouldBe Set(SubscriptionEntity.StatsTag)
-      SubscriptionEntity.tagsFor(SubscriptionEvent.MessageAcknowledged(ackId)) shouldBe
+      val _ = SubscriptionEntity.tagsFor(SubscriptionEvent.MessageAcknowledged(ackId)) shouldBe
         Set(SubscriptionEntity.LeaseTag, SubscriptionEntity.StatsTag)
+      // Deletion carries the index tag as well: the routing index has to see
+      // both ends of the lifecycle or fan-out never stops.
+      SubscriptionEntity.tagsFor(SubscriptionEvent.SubscriptionDeleted(sub, topic)) shouldBe
+        Set(SubscriptionEntity.CreatedTag, SubscriptionEntity.StatsTag)
     }
   }
 

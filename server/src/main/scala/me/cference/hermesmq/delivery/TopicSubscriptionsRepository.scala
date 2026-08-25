@@ -16,6 +16,7 @@ import scala.concurrent.blocking
   */
 trait TopicSubscriptionsRepository:
   def add(topicId: TopicId, subscriptionId: SubscriptionId): Future[Unit]
+  def remove(topicId: TopicId, subscriptionId: SubscriptionId): Future[Unit]
   def subscriptionsFor(topicId: TopicId): Future[Set[SubscriptionId]]
 
 /** In-memory implementation for tests (and single-node fallbacks). */
@@ -24,6 +25,14 @@ final class InMemoryTopicSubscriptionsRepository(using ExecutionContext) extends
 
   def add(topicId: TopicId, subscriptionId: SubscriptionId): Future[Unit] =
     Future(byTopic.updateAndGet(m => m.updated(topicId, m.getOrElse(topicId, Set.empty) + subscriptionId))).map(_ => ())
+
+  def remove(topicId: TopicId, subscriptionId: SubscriptionId): Future[Unit] =
+    Future(byTopic.updateAndGet { m =>
+      val left = m.getOrElse(topicId, Set.empty) - subscriptionId
+      // Drop the key rather than leave an empty set, so a topic with no
+      // subscribers reads the same whether it lost them or never had any.
+      if left.isEmpty then m.removed(topicId) else m.updated(topicId, left)
+    }).map(_ => ())
 
   def subscriptionsFor(topicId: TopicId): Future[Set[SubscriptionId]] =
     Future(byTopic.get().getOrElse(topicId, Set.empty))
@@ -41,6 +50,20 @@ final class JdbcTopicSubscriptionsRepository(dbConfig: DbConfig)(using Execution
         withConnection { conn =>
           val ps = conn.prepareStatement(
             "INSERT INTO topic_subscriptions (topic_id, subscription_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
+          )
+          ps.setString(1, topicId.value)
+          ps.setString(2, subscriptionId.value)
+          ps.executeUpdate()
+        }
+      }
+    }.map(_ => ())
+
+  def remove(topicId: TopicId, subscriptionId: SubscriptionId): Future[Unit] =
+    Future {
+      blocking {
+        withConnection { conn =>
+          val ps = conn.prepareStatement(
+            "DELETE FROM topic_subscriptions WHERE topic_id = ? AND subscription_id = ?"
           )
           ps.setString(1, topicId.value)
           ps.setString(2, subscriptionId.value)
