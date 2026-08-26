@@ -28,6 +28,7 @@ beforeAll(async () => {
       last.body = body;
       last.authorization = req.headers["authorization"] ?? "";
       last.apiKey = req.headers["x-api-key"] ?? "";
+      last.correlationId = req.headers["x-correlation-id"] ?? "";
 
       const { method, url } = req;
       if (method === "POST" && url === "/v1/topics") {
@@ -44,7 +45,12 @@ beforeAll(async () => {
         res.writeHead(204).end();
       } else if (method === "POST" && /^\/v1\/topics\/[^/]+\/messages$/.test(url)) {
         if (url.includes("/ghost/")) json(res, 404, { error: "no such topic" });
-        else if (body.idempotencyKey === "idem-1")
+        else if (url.includes("/plaintype/")) {
+          // 2xx, JSON body, non-JSON content-type label — delivery must be
+          // judged by status, not the label (the Demeter trap).
+          res.writeHead(202, { "content-type": "text/plain" });
+          res.end(JSON.stringify({ messageId: "m-plain", deduplicated: false }));
+        } else if (body.idempotencyKey === "idem-1")
           json(res, 202, { messageId: "m-orig", deduplicated: true });
         else json(res, 202, { messageId: "m-123", deduplicated: false });
       } else if (method === "POST" && url === "/v1/subscriptions") {
@@ -66,6 +72,18 @@ beforeAll(async () => {
         json(res, 404, { error: "not found" });
       } else if (method === "POST" && /^\/v1\/subscriptions\/[^/]+\/pull$/.test(url)) {
         if (url.includes("/ghost/")) json(res, 404, { error: "no such subscription" });
+        else if (url.includes("/corr-sub/"))
+          json(res, 200, {
+            messages: [
+              {
+                ackId: "a1",
+                payload: "hello",
+                attributes: {},
+                publishTime: "2026-07-08T00:00:00Z",
+                correlationId: "corr-42",
+              },
+            ],
+          });
         else
           json(res, 200, {
             messages: [
@@ -152,6 +170,23 @@ describe("publish & consume", () => {
     expect(result).toEqual({ messageId: "m-orig", deduplicated: true });
   });
 
+  it("sends the correlation id as the x-correlation-id header on publish", async () => {
+    await client.publish("orders", "hello", { correlationId: "corr-42" });
+    expect(last.correlationId).toBe("corr-42");
+  });
+
+  it("surfaces the delivered correlationId on pull (absent when none)", async () => {
+    const correlated = await client.pull("corr-sub");
+    expect(correlated[0].correlationId).toBe("corr-42");
+    const plain = await client.pull("s1");
+    expect(plain[0].correlationId).toBeUndefined();
+  });
+
+  it("counts a 2xx publish as delivered even when the content type is not JSON", async () => {
+    const result = await client.publish("plaintype", "hello");
+    expect(result).toEqual({ messageId: "m-plain", deduplicated: false });
+  });
+
   it("rejects publishing to a missing topic", async () => {
     const err = await client.publish("ghost", "x").catch((e) => e);
     expect(err).toBeInstanceOf(HermesClientError);
@@ -186,6 +221,13 @@ describe("publish & consume", () => {
     const result = await client.modifyAckDeadline("s1", ["a1"], 30);
     expect(result).toEqual({ modified: ["a1"], unknown: ["a-stale"] });
     expect(last.body).toEqual({ ackIds: ["a1"], ackDeadlineSeconds: 30 });
+  });
+
+  it("surfaces an unreachable listing as an error, never an empty result", async () => {
+    // "couldn't ask" must stay distinguishable from "nobody is listening".
+    const broken = new HermesClient(`${baseUrl}/nope`);
+    const err = await broken.listSubscriptions().catch((e) => e);
+    expect(err).toBeInstanceOf(HermesClientError);
   });
 
   it("lists subscriptions with stats", async () => {

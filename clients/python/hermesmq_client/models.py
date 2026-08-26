@@ -44,12 +44,17 @@ class PublishResult:
 
 @dataclass(frozen=True)
 class ReceivedMessage:
-    """A message delivered by a pull (payload is UTF-8 text)."""
+    """A message delivered by a pull (payload is UTF-8 text).
+
+    ``correlation_id`` is the request-tracing id the producer set on publish,
+    delivered verbatim by the broker (``None`` when the producer set none).
+    """
 
     ack_id: str
     payload: str
     attributes: dict[str, str]
     publish_time: str
+    correlation_id: str | None = None
 
 
 @dataclass(frozen=True)

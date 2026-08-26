@@ -12,6 +12,9 @@ import java.time.Instant
   * @param publishTime    when the message was published
   * @param expireTime     when the message expires (TTL); `None` = never expires
   * @param idempotencyKey optional producer dedup key; `None` = no deduplication
+  * @param correlationId  optional request-tracing correlation id the producer set
+  *                       on publish; carried (journaled) with the message and
+  *                       delivered verbatim — the broker never mints or strips it
   */
 final case class Message private (
     id: MessageId,
@@ -19,7 +22,8 @@ final case class Message private (
     attributes: Map[String, String],
     publishTime: Instant,
     expireTime: Option[Instant],
-    idempotencyKey: Option[String]
+    idempotencyKey: Option[String],
+    correlationId: Option[String]
 ):
   /** True when this message has a TTL that has been reached at `now`. */
   def expired(now: Instant): Boolean = expireTime.exists(!_.isAfter(now))
@@ -37,7 +41,19 @@ object Message:
       attributes: collection.Map[String, String],
       publishTime: Instant,
       expireTime: Option[Instant] = None,
-      idempotencyKey: Option[String] = None
+      idempotencyKey: Option[String] = None,
+      correlationId: Option[String] = None
   ): Either[ValidationError, Message] =
     if payload.isEmpty then Left(ValidationError("Message payload must not be empty"))
-    else Right(Message(id, payload.toVector, attributes.toMap, publishTime, expireTime, idempotencyKey.filter(_.nonEmpty)))
+    else
+      Right(
+        Message(
+          id,
+          payload.toVector,
+          attributes.toMap,
+          publishTime,
+          expireTime,
+          idempotencyKey.filter(_.nonEmpty),
+          correlationId.filter(_.nonEmpty)
+        )
+      )

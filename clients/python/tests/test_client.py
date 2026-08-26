@@ -58,6 +58,25 @@ class TestPublishAndConsume:
         assert result.message_id == "m-orig"
         assert result.deduplicated is True
 
+    def test_publish_correlation_id_sent_as_header(
+        self, client: HermesClient, stub: StubServer
+    ) -> None:
+        client.publish("orders", "hello", correlation_id="corr-42")
+        assert stub.last_request["x_correlation_id"] == "corr-42"
+
+    def test_pull_surfaces_delivered_correlation_id(self, client: HermesClient) -> None:
+        correlated = client.pull("corr-sub")
+        assert correlated[0].correlation_id == "corr-42"
+        plain = client.pull("s1")
+        assert plain[0].correlation_id is None
+
+    def test_2xx_with_non_json_content_type_still_counts_as_delivered(
+        self, client: HermesClient
+    ) -> None:
+        result = client.publish("plaintype", "hello")
+        assert result.message_id == "m-plain"
+        assert result.deduplicated is False
+
     def test_publish_to_missing_topic_raises(self, client: HermesClient) -> None:
         with pytest.raises(HermesClientError) as e:
             client.publish("ghost", "x")
@@ -97,6 +116,13 @@ class TestPublishAndConsume:
         subs = client.list_subscriptions()
         assert [s.subscription_id for s in subs] == ["s1"]
         assert subs[0].backlog == 3
+
+
+    def test_unreachable_listing_raises_never_returns_empty(self, base_url: str) -> None:
+        # "couldn't ask" must stay distinguishable from "nobody is listening".
+        with HermesClient(base_url + "/nope") as broken:
+            with pytest.raises(HermesClientError):
+                broken.list_subscriptions()
 
 
 class TestObservabilityAndAuth:

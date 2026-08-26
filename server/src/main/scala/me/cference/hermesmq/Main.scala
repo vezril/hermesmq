@@ -132,7 +132,11 @@ object Main:
             behaviorFactory = (_: Int) => ProjectionBehavior(SubscriptionIndexProjection(ctx.system, dbConfig, subscriptionsRepo)),
             stopMessage = ProjectionBehavior.Stop
           )
-          val deliveryHandler = DeliveryHandler(subscriptionsRepo, subscriptionService)
+          // The delivery fan-out logs under each message's journaled correlation id;
+          // the propagating EC carries that MDC across its Future hops.
+          val deliveryHandler = DeliveryHandler(subscriptionsRepo, subscriptionService)(using
+            me.cference.hermesmq.tracing.MdcPropagatingExecutionContext(ctx.executionContext)
+          )
           ShardedDaemonProcess(ctx.system).init(
             name = "delivery-projection",
             numberOfInstances = 1,

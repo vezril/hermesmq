@@ -78,7 +78,7 @@ export class HermesClient {
   /**
    * @param {string} topicId
    * @param {string} payload
-   * @param {{attributes?: Record<string, string>, ttlSeconds?: number, idempotencyKey?: string, producerId?: string}} [options]
+   * @param {{attributes?: Record<string, string>, ttlSeconds?: number, idempotencyKey?: string, producerId?: string, correlationId?: string}} [options]
    * @returns {Promise<{messageId: string, deduplicated: boolean}>}
    */
   async publish(topicId, payload, options = {}) {
@@ -86,10 +86,14 @@ export class HermesClient {
     if (options.ttlSeconds !== undefined) body.ttlSeconds = options.ttlSeconds;
     if (options.idempotencyKey !== undefined) body.idempotencyKey = options.idempotencyKey;
     if (options.producerId !== undefined) body.producerId = options.producerId;
+    // The REST publish adopts the X-Correlation-Id header as the message's
+    // correlation id (request-tracing); delivered verbatim to consumers.
+    const headers =
+      options.correlationId !== undefined ? { "x-correlation-id": options.correlationId } : undefined;
     const data = await this.request(
       "POST",
       `/v1/topics/${encodeURIComponent(topicId)}/messages`,
-      { body, ok: [202, 201], json: true }
+      { body, ok: [202, 201], json: true, headers }
     );
     return { messageId: data.messageId, deduplicated: data.deduplicated ?? false };
   }
@@ -128,7 +132,7 @@ export class HermesClient {
   /**
    * @param {string} subscriptionId
    * @param {{max?: number, consumerId?: string}} [options]
-   * @returns {Promise<Array<{ackId: string, payload: string, attributes: Record<string, string>, publishTime: string}>>}
+   * @returns {Promise<Array<{ackId: string, payload: string, attributes: Record<string, string>, publishTime: string, correlationId?: string}>>}
    */
   async pull(subscriptionId, options = {}) {
     const body = { max: options.max ?? 10 };
@@ -177,11 +181,11 @@ export class HermesClient {
 
   // -- plumbing ----------------------------------------------------------
 
-  /** @private @param {string} method @param {string} path @param {object} [body] */
-  async send(method, path, body) {
+  /** @private @param {string} method @param {string} path @param {object} [body] @param {Record<string,string>} [extraHeaders] */
+  async send(method, path, body, extraHeaders) {
     return this.fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: this.headers,
+      headers: extraHeaders ? { ...this.headers, ...extraHeaders } : this.headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   }
@@ -189,10 +193,10 @@ export class HermesClient {
   /**
    * @private
    * @param {string} method @param {string} path
-   * @param {{body?: object, ok: number[], json?: boolean}} spec
+   * @param {{body?: object, ok: number[], json?: boolean, headers?: Record<string, string>}} spec
    */
   async request(method, path, spec) {
-    const res = await this.send(method, path, spec.body);
+    const res = await this.send(method, path, spec.body, spec.headers);
     if (!spec.ok.includes(res.status)) {
       throw new HermesClientError(res.status, await res.text());
     }

@@ -37,7 +37,13 @@ final case class PublishRequest(
 final case class PublishResponse(messageId: String, deduplicated: Boolean = false)
 final case class CreateSubscriptionRequest(subscriptionId: String, topicId: String)
 final case class PullRequest(max: Option[Int], consumerId: Option[String] = None)
-final case class PulledMessageJson(ackId: String, payload: String, attributes: Map[String, String], publishTime: String)
+final case class PulledMessageJson(
+    ackId: String,
+    payload: String,
+    attributes: Map[String, String],
+    publishTime: String,
+    correlationId: Option[String] = None
+)
 final case class PullResponse(messages: List[PulledMessageJson])
 final case class AckRequest(ackIds: List[String])
 final case class AckResponse(acknowledged: List[String], unknown: List[String])
@@ -49,7 +55,7 @@ object PubSubJson extends DefaultJsonProtocol:
   given RootJsonFormat[PublishResponse]           = jsonFormat2(PublishResponse.apply)
   given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat2(CreateSubscriptionRequest.apply)
   given RootJsonFormat[PullRequest]               = jsonFormat2(PullRequest.apply)
-  given RootJsonFormat[PulledMessageJson]         = jsonFormat4(PulledMessageJson.apply)
+  given RootJsonFormat[PulledMessageJson]         = jsonFormat5(PulledMessageJson.apply)
   given RootJsonFormat[PullResponse]              = jsonFormat1(PullResponse.apply)
   given RootJsonFormat[AckRequest]                = jsonFormat1(AckRequest.apply)
   given RootJsonFormat[AckResponse]               = jsonFormat2(AckResponse.apply)
@@ -79,12 +85,16 @@ final class PubSubRoutes(
       // Publish: POST /v1/topics/{id}/messages
       path("v1" / "topics" / Segment / "messages") { rawTopic =>
         post {
+          // REST's equivalent of PublishRequest.correlation_id is the request's
+          // X-Correlation-Id header: adopted onto the message (journaled), never
+          // minted — an absent header publishes an uncorrelated message.
+          optionalHeaderValueByName(me.cference.hermesmq.tracing.Correlation.HttpHeader) { correlationHeader =>
           entity(as[PublishRequest]) { req =>
             TenantScope.validateExternalId(rawTopic).flatMap(TopicId.from) match
               case Left(err) => complete(StatusCodes.BadRequest, err.message)
               case Right(topicId) =>
                 producers.touch(topicId, req.producerId.getOrElse(""), Instant.now())
-                buildMessage(req) match
+                buildMessage(req, correlationHeader) match
                   case Left(err) => complete(StatusCodes.BadRequest, err.message)
                   case Right(message) =>
                     onComplete(topics.submit(topicId, TopicCommand.Publish(message))) {
@@ -96,6 +106,7 @@ final class PubSubRoutes(
                       case Success(CommandReply.Accepted)                          => complete(StatusCodes.InternalServerError)
                       case Failure(_)                                              => complete(StatusCodes.ServiceUnavailable)
                     }
+          }
           }
         }
       },
@@ -190,17 +201,18 @@ final class PubSubRoutes(
       case Right(id) => inner(id)
       case Left(err) => complete(StatusCodes.BadRequest, err.message)
 
-  private def buildMessage(req: PublishRequest): Either[ValidationError, Message] =
+  private def buildMessage(req: PublishRequest, correlationId: Option[String]): Either[ValidationError, Message] =
     val id  = MessageId.from(UUID.randomUUID().toString).toOption.get
     val now = Instant.now()
-    // An empty idempotency key is normalised to None (no dedup) by Message.from.
+    // An empty idempotency key / correlation id is normalised to None by Message.from.
     Message.from(
       id,
       req.payload.getBytes(UTF_8),
       req.attributes.getOrElse(Map.empty),
       now,
       ttlConfig.expireAt(now, req.ttlSeconds.getOrElse(0)),
-      idempotencyKey = req.idempotencyKey
+      idempotencyKey = req.idempotencyKey,
+      correlationId = correlationId
     )
 
   private def toJson(pm: PulledMessage): PulledMessageJson =
@@ -208,7 +220,8 @@ final class PubSubRoutes(
       ackId = pm.ackId.value,
       payload = new String(pm.message.payload.toArray, UTF_8),
       attributes = pm.message.attributes,
-      publishTime = pm.message.publishTime.toString
+      publishTime = pm.message.publishTime.toString,
+      correlationId = pm.message.correlationId
     )
 
   /** Modify (extend or nack) the deadline of each id. Returns `None` when the

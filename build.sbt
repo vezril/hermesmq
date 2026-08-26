@@ -47,7 +47,7 @@ lazy val scalaTestVersion       = "3.2.19"
 // pinned exactly so a mismatch is a build error. This must be the-lexicon release
 // that first ships `lexicon-hermes-grpc` (its add-hermes-grpc-contract, expected
 // v0.4.0). Verified locally against the byte-identical publishLocal stubs.
-lazy val lexiconVersion         = "0.7.0"
+lazy val lexiconVersion         = "0.8.0"
 lazy val logbackVersion         = "1.5.16"
 lazy val logstashLogbackVersion = "8.0"
 lazy val sprayJsonVersion       = "1.3.6"
@@ -119,6 +119,7 @@ lazy val server = (project in file("server"))
     libraryDependencies ++= Seq(
       // Shared HermesMQ gRPC stubs (server power API + client) — the contract lives in the Lexicon.
       "io.codex"         %% "lexicon-hermes-grpc"           % lexiconVersion,
+      "io.codex"         %% "lexicon-common"                % lexiconVersion,
       "org.apache.pekko" %% "pekko-actor-typed"             % pekkoVersion,
       "org.apache.pekko" %% "pekko-cluster-typed"           % pekkoVersion,
       "org.apache.pekko" %% "pekko-cluster-sharding-typed"  % pekkoVersion,
