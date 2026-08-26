@@ -66,6 +66,15 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
               entity(as[String]) { body =>
                 lastPublishBody = body
                 if id == "ghost" then complete(StatusCodes.NotFound)
+                else if id == "plaintype" then
+                  // 2xx with JSON body but a non-JSON content-type label — the
+                  // Demeter trap: delivery must be judged by status, not label.
+                  complete(
+                    (
+                      StatusCodes.Accepted,
+                      HttpEntity(ContentTypes.`text/plain(UTF-8)`, """{"messageId":"m-plain","deduplicated":false}""")
+                    )
+                  )
                 else if body.contains("\"idem-1\"") then
                   jsonStatus(StatusCodes.Accepted, """{"messageId":"m-orig","deduplicated":true}""")
                 else jsonStatus(StatusCodes.Accepted, """{"messageId":"m-123","deduplicated":false}""")
@@ -191,6 +200,11 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
       val _      = result.messageId.value shouldBe "m-orig"
       result.deduplicated shouldBe true
     }
+    "count a 2xx publish as delivered even when the content type is not JSON" in {
+      val result = client.publish(tid("plaintype"), "hello").futureValue
+      val _      = result.messageId.value shouldBe "m-plain"
+      result.deduplicated shouldBe false
+    }
     "create a subscription (201 → success)" in {
       client.createSubscription(sid("s1"), tid("orders")).futureValue
       succeed
@@ -229,6 +243,12 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
       val subs = client.listSubscriptions().futureValue
       val _    = subs.map(_.subscriptionId.value) shouldBe List("s1")
       subs.head.backlog shouldBe 3
+    }
+    "surface an unreachable listing as an error and never as an empty result" in {
+      // "couldn't ask" must stay distinguishable from "nobody is listening":
+      // a caller alarming on zero subscribers must not see unknown as 0.
+      val broken = HermesClient(s"http://localhost:${binding.localAddress.getPort}/nope")(using system)
+      broken.listSubscriptions().failed.futureValue shouldBe a[HermesClientException]
     }
     "fail when publishing to a missing topic" in {
       client.publish(tid("ghost"), "x").failed.futureValue shouldBe a[HermesClientException]
