@@ -25,3 +25,30 @@ final class SubscriptionIndexHandlerSpec extends AnyFunSuite with Matchers with 
     SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.MessageAcknowledged(ackId)).futureValue
     repo.subscriptionsFor(tid("orders")).futureValue shouldBe empty
   }
+
+  test("a SubscriptionDeleted event un-indexes it, so fan-out stops") {
+    // The half that was missing: an index that only ever grows keeps handing
+    // messages to a subscription that can no longer acknowledge them, and the
+    // backlog builds until they dead-letter.
+    val repo = InMemoryTopicSubscriptionsRepository()
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionCreated(sid("s1"), tid("orders"))).futureValue
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionCreated(sid("s2"), tid("orders"))).futureValue
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionDeleted(sid("s1"), tid("orders"))).futureValue
+    repo.subscriptionsFor(tid("orders")).futureValue shouldBe Set(sid("s2"))
+  }
+
+  test("deleting the last subscription leaves the topic with none") {
+    val repo = InMemoryTopicSubscriptionsRepository()
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionCreated(sid("s1"), tid("orders"))).futureValue
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionDeleted(sid("s1"), tid("orders"))).futureValue
+    repo.subscriptionsFor(tid("orders")).futureValue shouldBe empty
+  }
+
+  test("deleting from one topic does not disturb another") {
+    val repo = InMemoryTopicSubscriptionsRepository()
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionCreated(sid("s1"), tid("orders"))).futureValue
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionCreated(sid("s1"), tid("billing"))).futureValue
+    SubscriptionIndexProjection.indexEvent(repo, SubscriptionEvent.SubscriptionDeleted(sid("s1"), tid("orders"))).futureValue
+    repo.subscriptionsFor(tid("billing")).futureValue shouldBe Set(sid("s1"))
+  }
+

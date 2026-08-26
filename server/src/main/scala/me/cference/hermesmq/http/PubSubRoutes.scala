@@ -120,6 +120,25 @@ final class PubSubRoutes(
               }
             }
           },
+          // Delete: DELETE /v1/subscriptions/{id}
+          //
+          // Placed before the {id}/... routes: `path(Segment)` only matches a
+          // bare id, so ordering is not load-bearing, but keeping the lifecycle
+          // endpoints together reads better.
+          path(Segment) { rawSub =>
+            delete {
+              withSubId(rawSub) { sid =>
+                onComplete(subscriptions.submit(sid, SubscriptionCommand.DeleteSubscription)) {
+                  case Success(CommandReply.Accepted) => complete(StatusCodes.NoContent)
+                  // Rejected here is only ever SubscriptionNotFound: deleting
+                  // something already gone is a 404, not a silent success.
+                  case Success(CommandReply.Rejected(_))     => complete(StatusCodes.NotFound)
+                  case Success(CommandReply.Published(_, _)) => complete(StatusCodes.InternalServerError)
+                  case Failure(_)                            => complete(StatusCodes.ServiceUnavailable)
+                }
+              }
+            }
+          },
           // Pull: POST /v1/subscriptions/{id}/pull
           path(Segment / "pull") { rawSub =>
             post {
