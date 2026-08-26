@@ -52,7 +52,7 @@ lazy val logbackVersion         = "1.5.16"
 lazy val logstashLogbackVersion = "8.0"
 lazy val sprayJsonVersion       = "1.3.6"
 lazy val postgresVersion        = "42.7.4"
-lazy val testcontainersVersion  = "1.20.4"
+lazy val testcontainersVersion  = "1.21.4"
 
 // Publish library artifacts (domain, client) to GitHub Packages.
 lazy val publishSettings = Seq(
