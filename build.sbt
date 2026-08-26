@@ -42,7 +42,7 @@ lazy val pekkoVersion           = "1.2.0"
 lazy val pekkoHttpVersion       = "1.2.0"
 lazy val pekkoJdbcVersion       = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
 lazy val pekkoProjectionVersion = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
-lazy val scalaTestVersion       = "3.2.19"
+lazy val scalaTestVersion       = "3.2.20"
 // The gRPC contract is sourced from the Lexicon (change adopt-lexicon-grpc-contracts);
 // pinned exactly so a mismatch is a build error. This must be the-lexicon release
 // that first ships `lexicon-hermes-grpc` (its add-hermes-grpc-contract, expected
