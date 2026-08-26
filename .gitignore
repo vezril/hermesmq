@@ -23,3 +23,8 @@ credentials.sbt
 
 # OS
 .DS_Store
+
+# Polyglot client workspaces
+clients/python/.venv/
+clients/js/node_modules/
+__pycache__/
