@@ -29,6 +29,10 @@ update **all three** (and each client's stub-server tests) in the same PR:
 - **Observability**: health (`status`/`service`/`version`).
 - **Error model**: one typed error carrying HTTP status + body; *get-topic on 404 returns
   empty/None/null* (a missing read is normal); everything else non-2xx raises/rejects.
+- **Status decides success, not the body's content-type label**: a 2xx whose JSON body arrives
+  under an unexpected `Content-Type` still parses and counts as delivered — never surfaced as a
+  transport failure (misreading a delivered publish as failed causes retries/duplicate alerts;
+  found in the wild by demeter-service). Each suite has an explicit test for this.
 - **Auth**: optional constructor token → `Authorization: Bearer`; optional api key → `X-API-Key`;
   neither sent by default.
 - **Tests**: hermetic (in-process stub server, no live broker), asserting request wire-shapes

@@ -44,7 +44,12 @@ beforeAll(async () => {
         res.writeHead(204).end();
       } else if (method === "POST" && /^\/v1\/topics\/[^/]+\/messages$/.test(url)) {
         if (url.includes("/ghost/")) json(res, 404, { error: "no such topic" });
-        else if (body.idempotencyKey === "idem-1")
+        else if (url.includes("/plaintype/")) {
+          // 2xx, JSON body, non-JSON content-type label — delivery must be
+          // judged by status, not the label (the Demeter trap).
+          res.writeHead(202, { "content-type": "text/plain" });
+          res.end(JSON.stringify({ messageId: "m-plain", deduplicated: false }));
+        } else if (body.idempotencyKey === "idem-1")
           json(res, 202, { messageId: "m-orig", deduplicated: true });
         else json(res, 202, { messageId: "m-123", deduplicated: false });
       } else if (method === "POST" && url === "/v1/subscriptions") {
@@ -150,6 +155,11 @@ describe("publish & consume", () => {
   it("surfaces a deduplicated publish", async () => {
     const result = await client.publish("orders", "hello", { idempotencyKey: "idem-1" });
     expect(result).toEqual({ messageId: "m-orig", deduplicated: true });
+  });
+
+  it("counts a 2xx publish as delivered even when the content type is not JSON", async () => {
+    const result = await client.publish("plaintype", "hello");
+    expect(result).toEqual({ messageId: "m-plain", deduplicated: false });
   });
 
   it("rejects publishing to a missing topic", async () => {

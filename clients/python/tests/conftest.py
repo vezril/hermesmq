@@ -37,13 +37,15 @@ class _StubHandler(BaseHTTPRequestHandler):
             "x_api_key": self.headers.get("X-API-Key", ""),
         }
 
-    def _send(self, status: int, payload: Any | None = None) -> None:
+    def _send(
+        self, status: int, payload: Any | None = None, content_type: str = "application/json"
+    ) -> None:
         self.send_response(status)
         if payload is None:
             self.end_headers()
             return
         data = json.dumps(payload).encode()
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -86,6 +88,14 @@ class _StubHandler(BaseHTTPRequestHandler):
         elif m := re.fullmatch(r"/v1/topics/([^/]+)/messages", self.path):
             if m.group(1) == "ghost":
                 self._send(404, {"error": "no such topic"})
+            elif m.group(1) == "plaintype":
+                # 2xx, JSON body, non-JSON content-type label — delivery must be
+                # judged by status, not the label (the Demeter trap).
+                self._send(
+                    202,
+                    {"messageId": "m-plain", "deduplicated": False},
+                    content_type="text/plain",
+                )
             elif body.get("idempotencyKey") == "idem-1":
                 self._send(202, {"messageId": "m-orig", "deduplicated": True})
             else:
