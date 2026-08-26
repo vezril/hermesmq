@@ -198,6 +198,13 @@ describe("publish & consume", () => {
     expect(last.body).toEqual({ ackIds: ["a1"], ackDeadlineSeconds: 30 });
   });
 
+  it("surfaces an unreachable listing as an error, never an empty result", async () => {
+    // "couldn't ask" must stay distinguishable from "nobody is listening".
+    const broken = new HermesClient(`${baseUrl}/nope`);
+    const err = await broken.listSubscriptions().catch((e) => e);
+    expect(err).toBeInstanceOf(HermesClientError);
+  });
+
   it("lists subscriptions with stats", async () => {
     const subs = await client.listSubscriptions();
     expect(subs[0].subscriptionId).toBe("s1");

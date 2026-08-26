@@ -35,5 +35,10 @@ update **all three** (and each client's stub-server tests) in the same PR:
   found in the wild by demeter-service). Each suite has an explicit test for this.
 - **Auth**: optional constructor token → `Authorization: Bearer`; optional api key → `X-API-Key`;
   neither sent by default.
+- **Unknown is never zero**: a listing/count that cannot be determined surfaces as the typed
+  error — never as an empty list or `0`. "I couldn't ask" and "nobody is listening" demand opposite
+  responses from callers (a drift alarm must fire on a definite zero audience and hold on unknown —
+  demeter-service's rule). Each suite has an explicit test that a failed listing raises rather than
+  returning empty.
 - **Tests**: hermetic (in-process stub server, no live broker), asserting request wire-shapes
   (bodies, headers) as well as response parsing.

@@ -244,6 +244,12 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
       val _    = subs.map(_.subscriptionId.value) shouldBe List("s1")
       subs.head.backlog shouldBe 3
     }
+    "surface an unreachable listing as an error and never as an empty result" in {
+      // "couldn't ask" must stay distinguishable from "nobody is listening":
+      // a caller alarming on zero subscribers must not see unknown as 0.
+      val broken = HermesClient(s"http://localhost:${binding.localAddress.getPort}/nope")(using system)
+      broken.listSubscriptions().failed.futureValue shouldBe a[HermesClientException]
+    }
     "fail when publishing to a missing topic" in {
       client.publish(tid("ghost"), "x").failed.futureValue shouldBe a[HermesClientException]
     }

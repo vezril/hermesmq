@@ -106,6 +106,13 @@ class TestPublishAndConsume:
         assert subs[0].backlog == 3
 
 
+    def test_unreachable_listing_raises_never_returns_empty(self, base_url: str) -> None:
+        # "couldn't ask" must stay distinguishable from "nobody is listening".
+        with HermesClient(base_url + "/nope") as broken:
+            with pytest.raises(HermesClientError):
+                broken.list_subscriptions()
+
+
 class TestObservabilityAndAuth:
     def test_health(self, client: HermesClient) -> None:
         health = client.health()
