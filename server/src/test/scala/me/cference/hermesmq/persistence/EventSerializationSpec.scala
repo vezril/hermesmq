@@ -83,6 +83,21 @@ final class EventSerializationSpec
         .get
       roundTrip[TopicEvent](TopicEvent.MessagePublished(keyed)) shouldBe TopicEvent.MessagePublished(keyed)
     }
+    "round-trip MessagePublished carrying a correlation id (journaled, survives replay)" in {
+      val correlated = Message
+        .from(msgId, "hi".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z"), correlationId = Some("corr-1"))
+        .toOption
+        .get
+      roundTrip[TopicEvent](TopicEvent.MessagePublished(correlated)) shouldBe TopicEvent.MessagePublished(correlated)
+    }
+    "omit correlationId when absent and read a legacy message (no id) as None" in {
+      import JsonFormats.given
+      import spray.json.*
+      val _ = message.toJson.asJsObject.fields.contains("correlationId") shouldBe false
+      """{"id":"m-1","payload":"aGk=","attributes":{},"publishTime":"2026-07-07T00:00:00Z"}""".parseJson
+        .convertTo[Message]
+        .correlationId shouldBe None
+    }
     "omit idempotencyKey when absent and read a legacy message (no key) as None" in {
       import JsonFormats.given
       import spray.json.*

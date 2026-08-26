@@ -25,6 +25,8 @@ export interface PublishOptions {
   ttlSeconds?: number;
   idempotencyKey?: string;
   producerId?: string;
+  /** Request-tracing id, sent as X-Correlation-Id and carried to consumers verbatim. */
+  correlationId?: string;
 }
 
 export interface PublishResult {
@@ -37,6 +39,8 @@ export interface ReceivedMessage {
   payload: string;
   attributes: Record<string, string>;
   publishTime: string;
+  /** The producer's request-tracing id, delivered verbatim (absent when none was set). */
+  correlationId?: string;
 }
 
 export interface PullOptions {

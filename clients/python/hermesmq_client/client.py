@@ -117,6 +117,7 @@ class HermesClient:
         ttl_seconds: int | None = None,
         idempotency_key: str | None = None,
         producer_id: str | None = None,
+        correlation_id: str | None = None,
     ) -> PublishResult:
         body: dict[str, Any] = {"payload": payload, "attributes": attributes or {}}
         if ttl_seconds is not None:
@@ -125,7 +126,14 @@ class HermesClient:
             body["idempotencyKey"] = idempotency_key
         if producer_id is not None:
             body["producerId"] = producer_id
-        data = self._json(self._http.post(f"/v1/topics/{topic_id}/messages", json=body), 202, 201)
+        # The REST publish adopts the X-Correlation-Id header as the message's
+        # correlation id (request-tracing); delivered verbatim to consumers.
+        headers = {"X-Correlation-Id": correlation_id} if correlation_id else None
+        data = self._json(
+            self._http.post(f"/v1/topics/{topic_id}/messages", json=body, headers=headers),
+            202,
+            201,
+        )
         return PublishResult(
             message_id=data["messageId"], deduplicated=data.get("deduplicated", False)
         )
@@ -176,6 +184,7 @@ class HermesClient:
                 payload=m["payload"],
                 attributes=m.get("attributes", {}),
                 publish_time=m["publishTime"],
+                correlation_id=m.get("correlationId"),
             )
             for m in data["messages"]
         ]

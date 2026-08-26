@@ -35,6 +35,7 @@ class _StubHandler(BaseHTTPRequestHandler):
             "body": body,
             "authorization": self.headers.get("Authorization", ""),
             "x_api_key": self.headers.get("X-API-Key", ""),
+            "x_correlation_id": self.headers.get("X-Correlation-Id", ""),
         }
 
     def _send(
@@ -105,6 +106,21 @@ class _StubHandler(BaseHTTPRequestHandler):
         elif m := re.fullmatch(r"/v1/subscriptions/([^/]+)/pull", self.path):
             if m.group(1) == "ghost":
                 self._send(404, {"error": "no such subscription"})
+            elif m.group(1) == "corr-sub":
+                self._send(
+                    200,
+                    {
+                        "messages": [
+                            {
+                                "ackId": "a1",
+                                "payload": "hello",
+                                "attributes": {},
+                                "publishTime": "2026-07-08T00:00:00Z",
+                                "correlationId": "corr-42",
+                            }
+                        ]
+                    },
+                )
             else:
                 self._send(
                     200,

@@ -58,6 +58,18 @@ class TestPublishAndConsume:
         assert result.message_id == "m-orig"
         assert result.deduplicated is True
 
+    def test_publish_correlation_id_sent_as_header(
+        self, client: HermesClient, stub: StubServer
+    ) -> None:
+        client.publish("orders", "hello", correlation_id="corr-42")
+        assert stub.last_request["x_correlation_id"] == "corr-42"
+
+    def test_pull_surfaces_delivered_correlation_id(self, client: HermesClient) -> None:
+        correlated = client.pull("corr-sub")
+        assert correlated[0].correlation_id == "corr-42"
+        plain = client.pull("s1")
+        assert plain[0].correlation_id is None
+
     def test_2xx_with_non_json_content_type_still_counts_as_delivered(
         self, client: HermesClient
     ) -> None:
