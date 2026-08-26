@@ -12,10 +12,12 @@ import me.cference.hermesmq.observability.DedupCounter
 import me.cference.hermesmq.observability.ProducerRegistry
 import me.cference.hermesmq.persistence.SubscriptionService
 import me.cference.hermesmq.persistence.TopicService
+import me.cference.hermesmq.tracing.Correlation
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.grpc.scaladsl.Metadata
 import org.apache.pekko.stream.scaladsl.Source
+import org.slf4j.MDC
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -42,10 +44,12 @@ final class TopicAdminPowerApi(
     authed(metadata, admin = true)(_.deleteTopic(in))
 
   private def authed[A](metadata: Metadata, admin: Boolean)(f: TopicAdminGrpcService => Future[A]): Future[A] =
-    GrpcAuth.principal(metadata, authenticator, config) match
-      case None                                     => Future.failed(GrpcErrors.unauthenticated)
-      case Some(p) if admin && !p.hasScope("admin") => Future.failed(GrpcErrors.permissionDenied)
-      case Some(p)                                  => f(new TopicAdminGrpcService(new TenantScopedTopicService(base, scope, p.tenant)))
+    GrpcPowerApis.withCorrelation(metadata) {
+      GrpcAuth.principal(metadata, authenticator, config) match
+        case None                                     => Future.failed(GrpcErrors.unauthenticated)
+        case Some(p) if admin && !p.hasScope("admin") => Future.failed(GrpcErrors.permissionDenied)
+        case Some(p) => f(new TopicAdminGrpcService(new TenantScopedTopicService(base, scope, p.tenant)))
+    }
 
 /** Metadata-aware pub/sub gRPC handler: authenticates from call metadata and
   * delegates to a per-call tenant-scoped [[PubSubGrpcService]].
@@ -76,14 +80,18 @@ final class PubSubPowerApi(
     authed(metadata)(_.modifyAckDeadline(in))
 
   def streamMessages(in: StreamRequest, metadata: Metadata): Source[PulledMessage, NotUsed] =
-    GrpcAuth.principal(metadata, authenticator, config) match
-      case None    => Source.failed(GrpcErrors.unauthenticated)
-      case Some(p) => scoped(p).streamMessages(in)
+    GrpcPowerApis.withCorrelation(metadata) {
+      GrpcAuth.principal(metadata, authenticator, config) match
+        case None    => Source.failed(GrpcErrors.unauthenticated)
+        case Some(p) => scoped(p).streamMessages(in)
+    }
 
   def consume(in: Source[ConsumeRequest, NotUsed], metadata: Metadata): Source[PulledMessage, NotUsed] =
-    GrpcAuth.principal(metadata, authenticator, config) match
-      case None    => Source.failed(GrpcErrors.unauthenticated)
-      case Some(p) => scoped(p).consume(in)
+    GrpcPowerApis.withCorrelation(metadata) {
+      GrpcAuth.principal(metadata, authenticator, config) match
+        case None    => Source.failed(GrpcErrors.unauthenticated)
+        case Some(p) => scoped(p).consume(in)
+    }
 
   private def scoped(p: me.cference.hermesmq.auth.Principal): PubSubGrpcService =
     new PubSubGrpcService(
@@ -97,6 +105,22 @@ final class PubSubPowerApi(
     )
 
   private def authed[A](metadata: Metadata)(f: PubSubGrpcService => Future[A]): Future[A] =
-    GrpcAuth.principal(metadata, authenticator, config) match
-      case None    => Future.failed(GrpcErrors.unauthenticated)
-      case Some(p) => f(scoped(p))
+    GrpcPowerApis.withCorrelation(metadata) {
+      GrpcAuth.principal(metadata, authenticator, config) match
+        case None    => Future.failed(GrpcErrors.unauthenticated)
+        case Some(p) => f(scoped(p))
+    }
+
+object GrpcPowerApis:
+  /** Run `body` with the request's correlation id (stamped into metadata by
+    * [[GrpcTracing]]) in the MDC — the id survives into Future continuations
+    * via the MDC-propagating ExecutionContext. Symmetric put/remove: the
+    * boundary thread is cleaned so nothing leaks to the next request.
+    */
+  def withCorrelation[A](metadata: Metadata)(body: => A): A =
+    metadata.getText(Correlation.MetadataKey).filter(_.nonEmpty) match
+      case Some(id) =>
+        MDC.put(Correlation.MdcKey, id)
+        try body
+        finally MDC.remove(Correlation.MdcKey)
+      case None => body

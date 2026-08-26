@@ -225,7 +225,10 @@ final class PubSubGrpcService(
       in.attributes,
       now,
       ttlConfig.expireAt(now, in.ttlSeconds),
-      idempotencyKey = Some(in.idempotencyKey)
+      idempotencyKey = Some(in.idempotencyKey),
+      // Adopted, never minted: the producer owns the message's correlation id
+      // (empty stays empty — Message.from normalises "" to None).
+      correlationId = Some(in.correlationId)
     )
 
   private def toProto(pm: DomainPulledMessage): ProtoPulledMessage =
@@ -236,7 +239,9 @@ final class PubSubGrpcService(
       messageId = m.id.value,
       payload = ByteString.copyFrom(m.payload.toArray),
       attributes = m.attributes,
-      publishTime = m.publishTime.toString
+      publishTime = m.publishTime.toString,
+      // Delivered verbatim — the bus never strips a message's correlation id.
+      correlationId = m.correlationId.getOrElse("")
     )
 
 object PubSubGrpcService:

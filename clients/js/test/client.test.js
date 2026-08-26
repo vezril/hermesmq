@@ -28,6 +28,7 @@ beforeAll(async () => {
       last.body = body;
       last.authorization = req.headers["authorization"] ?? "";
       last.apiKey = req.headers["x-api-key"] ?? "";
+      last.correlationId = req.headers["x-correlation-id"] ?? "";
 
       const { method, url } = req;
       if (method === "POST" && url === "/v1/topics") {
@@ -71,6 +72,18 @@ beforeAll(async () => {
         json(res, 404, { error: "not found" });
       } else if (method === "POST" && /^\/v1\/subscriptions\/[^/]+\/pull$/.test(url)) {
         if (url.includes("/ghost/")) json(res, 404, { error: "no such subscription" });
+        else if (url.includes("/corr-sub/"))
+          json(res, 200, {
+            messages: [
+              {
+                ackId: "a1",
+                payload: "hello",
+                attributes: {},
+                publishTime: "2026-07-08T00:00:00Z",
+                correlationId: "corr-42",
+              },
+            ],
+          });
         else
           json(res, 200, {
             messages: [
@@ -155,6 +168,18 @@ describe("publish & consume", () => {
   it("surfaces a deduplicated publish", async () => {
     const result = await client.publish("orders", "hello", { idempotencyKey: "idem-1" });
     expect(result).toEqual({ messageId: "m-orig", deduplicated: true });
+  });
+
+  it("sends the correlation id as the x-correlation-id header on publish", async () => {
+    await client.publish("orders", "hello", { correlationId: "corr-42" });
+    expect(last.correlationId).toBe("corr-42");
+  });
+
+  it("surfaces the delivered correlationId on pull (absent when none)", async () => {
+    const correlated = await client.pull("corr-sub");
+    expect(correlated[0].correlationId).toBe("corr-42");
+    const plain = await client.pull("s1");
+    expect(plain[0].correlationId).toBeUndefined();
   });
 
   it("counts a 2xx publish as delivered even when the content type is not JSON", async () => {

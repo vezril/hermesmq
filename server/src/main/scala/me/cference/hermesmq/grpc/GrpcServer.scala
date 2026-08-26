@@ -30,10 +30,15 @@ object GrpcServer:
     given ClassicActorSystemProvider = system
     import system.executionContext
 
+    // Tracing is outermost (request-tracing): it adopts-or-mints the id and
+    // stamps request metadata before the handlers run, and echoes
+    // x-correlation-id on responses (incl. trailers-only errors).
     val handler: HttpRequest => Future[HttpResponse] =
-      ServiceHandler.concatOrNotFound(
-        TopicAdminServicePowerApiHandler.partial(topicAdmin),
-        PubSubServicePowerApiHandler.partial(pubSub)
+      GrpcTracing.instrument(
+        ServiceHandler.concatOrNotFound(
+          TopicAdminServicePowerApiHandler.partial(topicAdmin),
+          PubSubServicePowerApiHandler.partial(pubSub)
+        )
       )
 
     // Enable HTTP/2 for this bind only (cleartext h2c with protocol detection).

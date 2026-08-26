@@ -20,8 +20,11 @@ Every client provides the same conceptual surface and semantics. When the broker
 update **all three** (and each client's stub-server tests) in the same PR:
 
 - **Topics**: create (labels), get, update labels, delete, list (stats: `publishedTotal`, `deleted`).
-- **Publish**: payload + attributes, optional `ttlSeconds` / `idempotencyKey` / `producerId`;
-  result carries `messageId` **and** `deduplicated`.
+- **Publish**: payload + attributes, optional `ttlSeconds` / `idempotencyKey` / `producerId` /
+  `correlationId` (request-tracing — sent as the `X-Correlation-Id` header, journaled with the
+  message, delivered to consumers verbatim); result carries `messageId` **and** `deduplicated`.
+- **Delivered messages** carry the producer's `correlationId` (empty/absent when none was set) —
+  consumers adopt it as their logging context to join the originating trace.
 - **Subscriptions**: create, delete (204; the id stays **reserved** afterwards — recreate is 409),
   list (stats: backlog, oldest-unacked age, redelivered, dead-lettered).
 - **Consume**: pull (`max`, optional `consumerId`), ack (returns `acknowledged`/`unknown`),
