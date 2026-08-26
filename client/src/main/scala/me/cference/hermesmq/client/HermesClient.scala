@@ -122,6 +122,14 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
     token.map(t => RawHeader("Authorization", s"Bearer $t")).toList ++
       apiKey.map(k => RawHeader("X-API-Key", k)).toList
 
+  /** Re-label the entity as JSON before unmarshalling: success is decided by the
+    * HTTP status alone, so a 2xx whose body is JSON under an unexpected
+    * content-type header must still parse rather than surface as a transport
+    * failure (that misread turns delivered publishes into retries/dupes).
+    */
+  private def asJson(entity: ResponseEntity): ResponseEntity =
+    entity.withContentType(ContentTypes.`application/json`)
+
   private def request(method: HttpMethod, uri: String, entity: RequestEntity = HttpEntity.Empty): Future[HttpResponse] =
     http.singleRequest(HttpRequest(method, uri, headers = authHeaders, entity = entity))
 
@@ -136,7 +144,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
     request(HttpMethods.GET, s"$base/v1/topics/${topicId.value}").flatMap { resp =>
       resp.status match
         case StatusCodes.OK =>
-          Unmarshal(resp.entity).to[TopicResponse].map(r => Some(TopicInfo(TopicId.from(r.topicId).toOption.get, r.labels)))
+          Unmarshal(asJson(resp.entity)).to[TopicResponse].map(r => Some(TopicInfo(TopicId.from(r.topicId).toOption.get, r.labels)))
         case StatusCodes.NotFound =>
           val _ = resp.discardEntityBytes(system); Future.successful(None)
         case _ => fail(resp)
@@ -156,7 +164,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
     request(HttpMethods.GET, s"$base/v1/topics").flatMap { resp =>
       resp.status match
         case StatusCodes.OK =>
-          Unmarshal(resp.entity)
+          Unmarshal(asJson(resp.entity))
             .to[List[TopicStatsJson]]
             .map(_.map(t => TopicStats(TopicId.from(t.topicId).toOption.get, t.publishedTotal, t.deleted)))
         case _ => fail(resp)
@@ -175,7 +183,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
       resp   <- request(HttpMethods.POST, s"$base/v1/topics/${topicId.value}/messages", entity)
       result <- resp.status match
         case StatusCodes.Accepted | StatusCodes.Created =>
-          Unmarshal(resp.entity)
+          Unmarshal(asJson(resp.entity))
             .to[PublishResponse]
             .map(r => PublishResult(MessageId.from(r.messageId).toOption.get, r.deduplicated.getOrElse(false)))
         case _ => fail(resp)
@@ -196,7 +204,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
     request(HttpMethods.GET, s"$base/v1/subscriptions").flatMap { resp =>
       resp.status match
         case StatusCodes.OK =>
-          Unmarshal(resp.entity)
+          Unmarshal(asJson(resp.entity))
             .to[List[SubscriptionStatsJson]]
             .map(_.map { s =>
               SubscriptionStats(
@@ -217,7 +225,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
       resp   <- request(HttpMethods.POST, s"$base/v1/subscriptions/${subscriptionId.value}/pull", entity)
       messages <- resp.status match
         case StatusCodes.OK =>
-          Unmarshal(resp.entity).to[PullResponse].map(_.messages.map(toReceived))
+          Unmarshal(asJson(resp.entity)).to[PullResponse].map(_.messages.map(toReceived))
         case _ => fail(resp)
     yield messages
 
@@ -227,7 +235,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
       resp   <- request(HttpMethods.POST, s"$base/v1/subscriptions/${subscriptionId.value}/ack", entity)
       result <- resp.status match
         case StatusCodes.OK =>
-          Unmarshal(resp.entity).to[AckResponseJson].map(r => AckResult(r.acknowledged, r.unknown))
+          Unmarshal(asJson(resp.entity)).to[AckResponseJson].map(r => AckResult(r.acknowledged, r.unknown))
         case _ => fail(resp)
     yield result
 
@@ -241,7 +249,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
       resp   <- request(HttpMethods.POST, s"$base/v1/subscriptions/${subscriptionId.value}/modifyAckDeadline", entity)
       result <- resp.status match
         case StatusCodes.OK =>
-          Unmarshal(resp.entity).to[ModifyAckDeadlineResponseJson].map(r => ModifyAckDeadlineResult(r.modified, r.unknown))
+          Unmarshal(asJson(resp.entity)).to[ModifyAckDeadlineResponseJson].map(r => ModifyAckDeadlineResult(r.modified, r.unknown))
         case _ => fail(resp)
     yield result
 
@@ -249,7 +257,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
     request(HttpMethods.GET, s"$base/health").flatMap { resp =>
       resp.status match
         case StatusCodes.OK =>
-          Unmarshal(resp.entity).to[HealthJson].map(h => HealthInfo(h.status, h.service, h.version))
+          Unmarshal(asJson(resp.entity)).to[HealthJson].map(h => HealthInfo(h.status, h.service, h.version))
         case _ => fail(resp)
     }
 
