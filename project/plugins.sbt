@@ -2,7 +2,7 @@
 addSbtPlugin("com.github.sbt" % "sbt-dynver" % "5.1.0")
 
 // Packages the service as a runnable app and a Docker image.
-addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.10.4")
+addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.11.7")
 
 // Statement coverage reporting (scoverage) — ungated report in CI.
 addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.2.2")
