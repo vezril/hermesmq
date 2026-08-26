@@ -95,10 +95,12 @@ topic), `hermesmq_messages_redelivered_total`, and `hermesmq_messages_dead_lette
 (labelled by subscription), each with `# HELP` and `# TYPE` lines. It SHALL additionally emit
 the gauge `hermesmq_subscription_consumers` (labelled by subscription) reporting the number of
 distinct named consumers active within the configured activity window, read from the in-memory
-consumer registry, and the counter `hermesmq_publish_deduplicated_total` (labelled by topic)
-reporting how many publishes were collapsed as duplicates, read from the in-memory dedup counter.
-The endpoint SHALL read the stats read models (and the in-memory consumer registry and dedup
-counter) and require no readiness gate.
+consumer registry, the counter `hermesmq_publish_deduplicated_total` (labelled by topic)
+reporting how many publishes were collapsed as duplicates, read from the in-memory dedup counter,
+and the gauge `hermesmq_topic_producers` (labelled by topic) reporting the number of distinct
+named producers active within the configured activity window, read from the in-memory producer
+registry. The endpoint SHALL read the stats read models (and the in-memory consumer registry,
+dedup counter, and producer registry) and require no readiness gate.
 
 #### Scenario: Metrics are exposed in Prometheus format
 - **GIVEN** a subscription with a backlog and a topic with published messages
@@ -109,6 +111,11 @@ counter) and require no readiness gate.
 - **GIVEN** a subscription being consumed by two named consumers within the activity window
 - **WHEN** `/metrics` is scraped
 - **THEN** it contains a `hermesmq_subscription_consumers{subscription="…"} 2` sample with `# HELP`/`# TYPE` lines
+
+#### Scenario: The active-producer gauge reflects named producers
+- **GIVEN** a topic being published to by two named producers within the activity window
+- **WHEN** `/metrics` is scraped
+- **THEN** it contains a `hermesmq_topic_producers{topic="…"} 2` sample with `# HELP`/`# TYPE … gauge` lines
 
 #### Scenario: The dedup counter reflects collapsed duplicate publishes
 - **GIVEN** a topic for which two publishes have been collapsed as duplicates
