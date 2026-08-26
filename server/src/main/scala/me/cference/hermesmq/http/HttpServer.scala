@@ -34,7 +34,11 @@ object HttpServer:
     given classicSystem: org.apache.pekko.actor.ActorSystem = system.classicSystem
     import system.executionContext
 
-    val routes = HealthRoutes(version, () => readiness.isReady).routes ~ apiRoutes
+    // Tracing is outermost (request-tracing): adopt-or-mint the correlation id,
+    // access-log, and echo the header on every response incl. rejections.
+    val routes = RequestTracing.withCorrelationId(
+      HealthRoutes(version, () => readiness.isReady).routes ~ apiRoutes
+    )
 
     val bindingF = Http().newServerAt(config.host, config.port).bind(routes)
 

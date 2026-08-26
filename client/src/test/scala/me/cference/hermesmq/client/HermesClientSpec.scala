@@ -42,10 +42,12 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
   @volatile private var lastPullBody: String        = ""
   @volatile private var lastAuthHeader: String      = ""
   @volatile private var lastApiKeyHeader: String    = ""
+  @volatile private var lastCorrelationHeader: String = ""
 
   private val stub: Route = extractRequest { req =>
     lastAuthHeader = req.headers.find(_.is("authorization")).map(_.value).getOrElse("")
     lastApiKeyHeader = req.headers.find(_.is("x-api-key")).map(_.value).getOrElse("")
+    lastCorrelationHeader = req.headers.find(_.is("x-correlation-id")).map(_.value).getOrElse("")
     concat(
       pathPrefix("v1" / "topics") {
         concat(
@@ -114,6 +116,10 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
               entity(as[String]) { body =>
                 lastPullBody = body
                 if id == "ghost" then complete(StatusCodes.NotFound)
+                else if id == "corr-sub" then
+                  jsonOk(
+                    """{"messages":[{"ackId":"a1","payload":"hello","attributes":{},"publishTime":"2026-07-08T00:00:00Z","correlationId":"corr-42"}]}"""
+                  )
                 else
                   jsonOk(
                     """{"messages":[{"ackId":"a1","payload":"hello","attributes":{"k":"v"},"publishTime":"2026-07-08T00:00:00Z"}]}"""
@@ -223,6 +229,16 @@ final class HermesClientSpec extends ScalaTestWithActorTestKit with AnyWordSpecL
       val _    = msgs.map(_.ackId.value) shouldBe List("a1")
       val _    = msgs.head.payload shouldBe "hello"
       msgs.head.attributes shouldBe Map("k" -> "v")
+    }
+    "send the correlation id as the X-Correlation-Id header on publish" in {
+      val _ = client.publish(tid("orders"), "hello", correlationId = Some("corr-42")).futureValue
+      lastCorrelationHeader shouldBe "corr-42"
+    }
+    "surface the delivered correlationId on pull (and None when absent)" in {
+      val correlated = client.pull(sid("corr-sub")).futureValue
+      val _          = correlated.head.correlationId shouldBe Some("corr-42")
+      val plain = client.pull(sid("s1")).futureValue
+      plain.head.correlationId shouldBe None
     }
     "forward the consumer id on pull" in {
       val _ = client.pull(sid("s1"), 5, consumerId = Some("worker-1")).futureValue

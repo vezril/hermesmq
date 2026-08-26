@@ -52,7 +52,10 @@ object JsonFormats extends DefaultJsonProtocol:
       // dedup key serialize exactly as before.
       val withTtl = m.expireTime.fold(base)(t => base + ("expireTime" -> JsString(t.toString)))
       val withKey = m.idempotencyKey.fold(withTtl)(k => withTtl + ("idempotencyKey" -> JsString(k)))
-      JsObject(withKey)
+      // Journaled so it survives replay/restart (the bus role of request-tracing);
+      // omitted when absent so pre-tracing messages serialize exactly as before.
+      val withCid = m.correlationId.fold(withKey)(c => withKey + ("correlationId" -> JsString(c)))
+      JsObject(withCid)
     def read(json: JsValue): Message =
       val o           = json.asJsObject
       val id          = o.fields("id").convertTo[MessageId]
@@ -62,8 +65,9 @@ object JsonFormats extends DefaultJsonProtocol:
       // Tolerant: a message journaled before TTL / dedup has neither field.
       val expireTime     = o.fields.get("expireTime").map(v => Instant.parse(v.convertTo[String]))
       val idempotencyKey = o.fields.get("idempotencyKey").map(_.convertTo[String])
+      val correlationId  = o.fields.get("correlationId").map(_.convertTo[String])
       Message
-        .from(id, payload, attributes, publishTime, expireTime, idempotencyKey)
+        .from(id, payload, attributes, publishTime, expireTime, idempotencyKey, correlationId)
         .fold(e => deserializationError(e.message), identity)
 
   /** Labels default to empty when absent, so events journaled before topics had

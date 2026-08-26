@@ -152,6 +152,42 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       published.flatMap(_.idempotencyKey) shouldBe Some("abc")
     }
 
+    "adopt the correlation_id onto the published message and deliver it verbatim on pull" in {
+      @volatile var published: Option[Message] = None
+      val capturing = new TopicService:
+        def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+          command match
+            case TopicCommand.Publish(m) => published = Some(m); Future.successful(CommandReply.Published(m.id, deduplicated = false))
+            case _                       => Future.successful(CommandReply.Accepted)
+        def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
+      val _ = await(PubSubGrpcService(capturing, subs()).publish(
+        PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"), correlationId = "corr-42")
+      ))
+      val _ = published.flatMap(_.correlationId) shouldBe Some("corr-42")
+
+      // Delivery: the stored id comes back verbatim on Message.correlation_id.
+      val stored = Message
+        .from(MessageId.from("m-c").toOption.get, "hi".getBytes, Map.empty, Instant.parse("2026-07-07T00:00:00Z"), correlationId = Some("corr-42"))
+        .toOption
+        .get
+      val resp = await(service(s = subs(pullReply = Some(List(PulledMessage(ackId, stored))))).pull(PullRequest(subscriptionId = "s1")))
+      resp.messages.head.message.map(_.correlationId) shouldBe Some("corr-42")
+    }
+
+    "publish an empty correlation_id as an uncorrelated message (never minted)" in {
+      @volatile var published: Option[Message] = None
+      val capturing = new TopicService:
+        def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+          command match
+            case TopicCommand.Publish(m) => published = Some(m); Future.successful(CommandReply.Published(m.id, deduplicated = false))
+            case _                       => Future.successful(CommandReply.Accepted)
+        def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
+      val _ = await(PubSubGrpcService(capturing, subs()).publish(
+        PublishRequest(topicId = "orders", payload = ByteString.copyFromUtf8("hi"))
+      ))
+      published.flatMap(_.correlationId) shouldBe None
+    }
+
     "return deduplicated=true and the original messageId when the aggregate reports a duplicate" in {
       val original = MessageId.from("orig-1").toOption.get
       val svc      = service(t = topics(CommandReply.Published(original, deduplicated = true)))

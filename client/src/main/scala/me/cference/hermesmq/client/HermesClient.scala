@@ -36,8 +36,17 @@ final case class SubscriptionStats(
 /** The result of a publish: the assigned (or original, when deduplicated) id. */
 final case class PublishResult(messageId: MessageId, deduplicated: Boolean)
 
-/** A message received when pulling from a subscription (payload is UTF-8 text). */
-final case class ReceivedMessage(ackId: AckId, payload: String, attributes: Map[String, String], publishTime: String)
+/** A message received when pulling from a subscription (payload is UTF-8 text).
+  * `correlationId` is the request-tracing id the producer set on publish,
+  * delivered verbatim by the broker (None when the producer set none).
+  */
+final case class ReceivedMessage(
+    ackId: AckId,
+    payload: String,
+    attributes: Map[String, String],
+    publishTime: String,
+    correlationId: Option[String] = None
+)
 
 /** Which ack ids the broker acknowledged vs no longer knew. */
 final case class AckResult(acknowledged: List[String], unknown: List[String])
@@ -75,7 +84,13 @@ private[client] object HermesClientJson extends DefaultJsonProtocol:
       deadLetteredTotal: Long
   )
   final case class PullBody(max: Int, consumerId: Option[String])
-  final case class PulledMessageJson(ackId: String, payload: String, attributes: Map[String, String], publishTime: String)
+  final case class PulledMessageJson(
+      ackId: String,
+      payload: String,
+      attributes: Map[String, String],
+      publishTime: String,
+      correlationId: Option[String]
+  )
   final case class PullResponse(messages: List[PulledMessageJson])
   final case class AckBody(ackIds: List[String])
   final case class AckResponseJson(acknowledged: List[String], unknown: List[String])
@@ -92,7 +107,7 @@ private[client] object HermesClientJson extends DefaultJsonProtocol:
   given RootJsonFormat[CreateSubscriptionBody]        = jsonFormat2(CreateSubscriptionBody.apply)
   given RootJsonFormat[SubscriptionStatsJson]         = jsonFormat6(SubscriptionStatsJson.apply)
   given RootJsonFormat[PullBody]                      = jsonFormat2(PullBody.apply)
-  given RootJsonFormat[PulledMessageJson]             = jsonFormat4(PulledMessageJson.apply)
+  given RootJsonFormat[PulledMessageJson]             = jsonFormat5(PulledMessageJson.apply)
   given RootJsonFormat[PullResponse]                  = jsonFormat1(PullResponse.apply)
   given RootJsonFormat[AckBody]                       = jsonFormat1(AckBody.apply)
   given RootJsonFormat[AckResponseJson]               = jsonFormat2(AckResponseJson.apply)
@@ -176,11 +191,22 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
       attributes: Map[String, String] = Map.empty,
       ttlSeconds: Option[Int] = None,
       idempotencyKey: Option[String] = None,
-      producerId: Option[String] = None
+      producerId: Option[String] = None,
+      correlationId: Option[String] = None
   ): Future[PublishResult] =
+    // The REST publish adopts the X-Correlation-Id header as the message's
+    // correlation id (request-tracing); delivered verbatim to consumers.
+    val correlationHeaders = correlationId.filter(_.nonEmpty).map(c => RawHeader("X-Correlation-Id", c)).toList
     for
       entity <- Marshal(PublishBody(payload, attributes, ttlSeconds, idempotencyKey, producerId)).to[RequestEntity]
-      resp   <- request(HttpMethods.POST, s"$base/v1/topics/${topicId.value}/messages", entity)
+      resp <- http.singleRequest(
+        HttpRequest(
+          HttpMethods.POST,
+          s"$base/v1/topics/${topicId.value}/messages",
+          headers = authHeaders ++ correlationHeaders,
+          entity = entity
+        )
+      )
       result <- resp.status match
         case StatusCodes.Accepted | StatusCodes.Created =>
           Unmarshal(asJson(resp.entity))
@@ -262,7 +288,7 @@ final class HermesClient(baseUri: String, token: Option[String] = None, apiKey: 
     }
 
   private def toReceived(m: PulledMessageJson): ReceivedMessage =
-    ReceivedMessage(AckId.from(m.ackId).toOption.get, m.payload, m.attributes, m.publishTime)
+    ReceivedMessage(AckId.from(m.ackId).toOption.get, m.payload, m.attributes, m.publishTime, m.correlationId)
 
   /** Succeed (discarding the body) when the status matches, otherwise fail. */
   private def expect(resp: HttpResponse, ok: StatusCode): Future[Unit] =

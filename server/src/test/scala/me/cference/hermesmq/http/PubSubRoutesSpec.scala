@@ -5,6 +5,7 @@ import me.cference.hermesmq.persistence.*
 import org.apache.pekko.http.scaladsl.model.ContentTypes
 import org.apache.pekko.http.scaladsl.model.HttpEntity
 import org.apache.pekko.http.scaladsl.model.StatusCodes
+import org.apache.pekko.http.scaladsl.model.headers.RawHeader
 import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.testkit.ScalatestRouteTest
 import org.scalatest.matchers.should.Matchers
@@ -100,6 +101,25 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         Route.seal(PubSubRoutes(cap, subStub()).routes) ~> check {
           val _ = status shouldBe StatusCodes.Accepted
           cap.lastPublished.flatMap(_.idempotencyKey) shouldBe Some("abc")
+        }
+    }
+
+    "adopt the X-Correlation-Id header onto the published message (request-tracing bus)" in {
+      val cap = CapturingTopics()
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi"}"""))
+        .addHeader(RawHeader("X-Correlation-Id", "corr-9")) ~>
+        Route.seal(PubSubRoutes(cap, subStub()).routes) ~> check {
+          val _ = status shouldBe StatusCodes.Accepted
+          cap.lastPublished.flatMap(_.correlationId) shouldBe Some("corr-9")
+        }
+    }
+
+    "publish without a correlation header as an uncorrelated message (never minted)" in {
+      val cap = CapturingTopics()
+      Post("/v1/topics/orders/messages", json("""{"payload":"hi"}""")) ~>
+        Route.seal(PubSubRoutes(cap, subStub()).routes) ~> check {
+          val _ = status shouldBe StatusCodes.Accepted
+          cap.lastPublished.flatMap(_.correlationId) shouldBe None
         }
     }
 
@@ -203,6 +223,25 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
           val _ = arr.elements.size shouldBe 1
           val _ = arr.elements.head.asJsObject.fields("ackId").convertTo[String] shouldBe "ack-1"
           arr.elements.head.asJsObject.fields("payload").convertTo[String] shouldBe "hello"
+        }
+    }
+    "deliver the message's correlationId verbatim (and omit it when absent)" in {
+      val correlated = Message
+        .from(
+          MessageId.from("m-c").toOption.get,
+          "hi".getBytes,
+          Map.empty,
+          Instant.parse("2026-07-07T00:00:00Z"),
+          correlationId = Some("corr-9")
+        )
+        .toOption
+        .get
+      Post("/v1/subscriptions/s1/pull", json("""{"max":10}""")) ~>
+        routes(subs = subStub(pullReply = Some(List(PulledMessage(ackId, correlated), PulledMessage(ackId, message))))) ~>
+        check {
+          val arr = responseAs[String].parseJson.asJsObject.fields("messages").convertTo[JsArray]
+          val _ = arr.elements.head.asJsObject.fields("correlationId").convertTo[String] shouldBe "corr-9"
+          arr.elements(1).asJsObject.fields.contains("correlationId") shouldBe false
         }
     }
     "return 404 when the subscription does not exist" in {
