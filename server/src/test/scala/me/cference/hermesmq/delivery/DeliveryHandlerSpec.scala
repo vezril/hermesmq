@@ -4,9 +4,12 @@ import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.CommandReply
 import me.cference.hermesmq.persistence.PulledMessage
 import me.cference.hermesmq.persistence.SubscriptionService
+import me.cference.hermesmq.tracing.Correlation
+import me.cference.hermesmq.tracing.MdcPropagatingExecutionContext
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
+import org.slf4j.MDC
 
 import java.time.Instant
 import scala.collection.mutable
@@ -29,6 +32,63 @@ final class DeliveryHandlerSpec extends AnyFunSuite with Matchers with ScalaFutu
     def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
       calls += ((id, command)); Future.successful(CommandReply.Accepted)
     def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(None)
+
+  /** Records the correlation id visible in the MDC at the moment of fan-out —
+    * the observable proof that async delivery runs under the MESSAGE's id.
+    */
+  private class MdcRecordingService extends SubscriptionService:
+    val seen = mutable.ListBuffer[Option[String]]()
+    def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
+      seen += Option(MDC.get(Correlation.MdcKey)); Future.successful(CommandReply.Accepted)
+    def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(None)
+
+  private def correlated(id: String) = Message
+    .from(
+      MessageId.from("m-c").toOption.get,
+      "hi".getBytes,
+      Map.empty,
+      Instant.parse("2026-07-07T00:00:00Z"),
+      correlationId = Some(id)
+    )
+    .toOption
+    .get
+
+  test("fan-out runs under the message's correlation id, so async delivery joins the originating trace") {
+    // Production wires the propagating EC (Main) precisely so the id survives
+    // the Future hop between the repo lookup and the submit — use it here too.
+    given ec: scala.concurrent.ExecutionContext =
+      MdcPropagatingExecutionContext(scala.concurrent.ExecutionContext.Implicits.global)
+    val repo = InMemoryTopicSubscriptionsRepository()
+    repo.add(tid("orders"), sid("s1")).futureValue
+    repo.add(tid("orders"), sid("s2")).futureValue
+    val service = MdcRecordingService()
+
+    DeliveryHandler(repo, service).deliver(tid("orders"), correlated("corr-77")).futureValue
+
+    val _ = service.seen.size shouldBe 2
+    service.seen.toSet shouldBe Set(Some("corr-77")) // every fan-out saw the id
+  }
+
+  test("an uncorrelated message sets no correlation id on the delivery thread") {
+    given ec: scala.concurrent.ExecutionContext =
+      MdcPropagatingExecutionContext(scala.concurrent.ExecutionContext.Implicits.global)
+    val repo = InMemoryTopicSubscriptionsRepository()
+    repo.add(tid("orders"), sid("s1")).futureValue
+    val service = MdcRecordingService()
+
+    DeliveryHandler(repo, service).deliver(tid("orders"), message).futureValue
+
+    service.seen.toList shouldBe List(None)
+  }
+
+  test("delivery does not leak the correlation id onto the calling thread afterwards") {
+    given ec: scala.concurrent.ExecutionContext =
+      MdcPropagatingExecutionContext(scala.concurrent.ExecutionContext.Implicits.global)
+    val repo = InMemoryTopicSubscriptionsRepository()
+    repo.add(tid("orders"), sid("s1")).futureValue
+    DeliveryHandler(repo, MdcRecordingService()).deliver(tid("orders"), correlated("corr-88")).futureValue
+    Option(MDC.get(Correlation.MdcKey)) shouldBe None
+  }
 
   test("delivers a message to every subscription the read model returns (incl. other nodes')") {
     val repo = InMemoryTopicSubscriptionsRepository()
