@@ -1,0 +1,17 @@
+{
+  "name": "@hermesmq/client",
+  "version": "0.1.0",
+  "description": "Typed, zero-dependency JavaScript client for the HermesMQ REST API (topics, publish, subscriptions, pull/ack).",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

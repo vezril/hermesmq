@@ -534,7 +534,16 @@ logs emitted while serving that publish. An empty/absent id is anonymous.
 > exact under the single-replica deployment, cluster-wide aggregation a future
 > extension.
 
-## Scala client library
+## Client libraries
+
+One maintained client per constellation language wraps the REST API so services
+don't hand-roll HTTP — **Scala** (the `client` sbt module, below), **Python 3**
+([`clients/python`](clients/python)), and **JavaScript**
+([`clients/js`](clients/js), zero-dependency ESM). All three share the same
+surface, error model, and optional auth; see the matrix and conformance
+checklist in [`clients/README.md`](clients/README.md).
+
+### Scala client library
 
 A native, typed Scala client wraps the REST API so applications don't hand-roll
 HTTP. It ships as its own lightweight artifact (`hermesmq-client`) that depends
@@ -555,17 +564,26 @@ given system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "app")
 val client = HermesClient("http://localhost:8080")
 
 for
-  _   <- client.createTopic(TopicId.from("orders").toOption.get)
-  _   <- client.createSubscription(SubscriptionId.from("s1").toOption.get, TopicId.from("orders").toOption.get)
-  id  <- client.publish(TopicId.from("orders").toOption.get, "hello", Map("k" -> "v"))
-  msgs <- client.pull(SubscriptionId.from("s1").toOption.get, max = 10)   // after delivery
-  _   <- client.ack(SubscriptionId.from("s1").toOption.get, msgs.map(_.ackId))
+  _      <- client.createTopic(TopicId.from("orders").toOption.get)
+  _      <- client.createSubscription(SubscriptionId.from("s1").toOption.get, TopicId.from("orders").toOption.get)
+  result <- client.publish(
+              TopicId.from("orders").toOption.get,
+              "hello",
+              Map("k" -> "v"),
+              idempotencyKey = Some("order-42"),   // broker dedups repeats → result.deduplicated
+              producerId = Some("checkout-1")      // shows in hermesmq_topic_producers
+            )
+  msgs   <- client.pull(SubscriptionId.from("s1").toOption.get, max = 10, consumerId = Some("worker-1"))
+  acked  <- client.ack(SubscriptionId.from("s1").toOption.get, msgs.map(_.ackId))
 yield ()
 ```
 
 Methods return `Future`s; error statuses fail the future with a
-`HermesClientException`, while a not-found on a read (`getTopic`) is an empty
-result. The caller owns the `ActorSystem`.
+`HermesClientException` (carrying the HTTP status), while a not-found on a read
+(`getTopic`) is an empty result. Also available: `deleteSubscription`,
+`modifyAckDeadline`, `listTopics`/`listSubscriptions`, `health`, and optional
+auth (`HermesClient(uri, token = Some(...))` → `Authorization: Bearer`, or
+`apiKey = Some(...)` → `X-API-Key`). The caller owns the `ActorSystem`.
 
 ## Persistence
 

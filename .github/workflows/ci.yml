@@ -149,6 +149,47 @@ jobs:
       - name: Coverage
         run: sbt -v clean coverage test coverageAggregate
 
+  # Python client suite (clients/python). Non-required, path-filtered by the
+  # `if` guard being absent — cheap enough to run always; hermetic (in-process
+  # stub server, no broker).
+  python-client:
+    name: Python client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/python
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+      - name: Sync
+        run: uv sync
+      - name: Tests
+        run: uv run pytest
+      - name: Lint (ruff)
+        run: uv run ruff check .
+      - name: Types (mypy strict)
+        run: uv run mypy hermesmq_client tests
+
+  # JavaScript client suite (clients/js). Non-required; hermetic (node:http
+  # stub, no broker). The client itself has zero runtime deps — only vitest is
+  # installed here.
+  js-client:
+    name: JS client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/js
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install (vitest only)
+        run: npm install
+      - name: Tests
+        run: npm test
+
   # Secret scan over the repo and its history. Separate job so a scan hiccup
   # can't fail the compile gate.
   gitleaks:
