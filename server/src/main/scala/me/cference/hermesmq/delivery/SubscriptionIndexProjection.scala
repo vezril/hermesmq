@@ -26,10 +26,14 @@ object SubscriptionIndexProjection:
 
   private val ProjectionName = "subscription-index"
 
-  /** The per-event effect: index `SubscriptionCreated`, ignore the rest. */
+  /** The per-event effect: index a creation, un-index a deletion, ignore the
+    * rest. Both ends matter -- an index that only ever grows keeps handing
+    * messages to a subscription that can no longer acknowledge them.
+    */
   def indexEvent(repository: TopicSubscriptionsRepository, event: SubscriptionEvent)(using ExecutionContext): Future[Unit] =
     event match
       case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId) => repository.add(topicId, subscriptionId)
+      case SubscriptionEvent.SubscriptionDeleted(subscriptionId, topicId) => repository.remove(topicId, subscriptionId)
       case _                                                              => Future.unit
 
   def apply(system: ActorSystem[?], dbConfig: DbConfig, repository: TopicSubscriptionsRepository) =

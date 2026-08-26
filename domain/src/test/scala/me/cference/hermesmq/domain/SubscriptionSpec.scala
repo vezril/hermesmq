@@ -166,3 +166,46 @@ final class SubscriptionSpec extends AnyFunSuite:
   test("ExpireMessage on an unknown/gone ackId is a no-op") {
     assert(Subscription.decide(created, ExpireMessage(ackId, now = expireAt)) == Right(Nil))
   }
+
+  // --- deletion ---
+
+  private def live: SubscriptionState =
+    Subscription.evolve(Subscription.empty, SubscriptionCreated(subId, topicId))
+
+  test("deleting an existing subscription emits SubscriptionDeleted carrying its topic"):
+    // The topic travels with the event so the routing index can un-index it
+    // without going back to ask what it was subscribed to.
+    assert(Subscription.decide(live, DeleteSubscription) == Right(List(SubscriptionDeleted(subId, topicId))))
+
+  test("a deleted subscription no longer exists"):
+    val deleted = Subscription.evolve(live, SubscriptionDeleted(subId, topicId))
+    val _ = assert(!deleted.exists)
+    assert(deleted.created, "the id stays recorded, which is what stops it being reused")
+
+  test("deleting twice is a rejection, not a silent success"):
+    // A caller has to be able to tell "I removed it" from "it was already gone".
+    val deleted = Subscription.evolve(live, SubscriptionDeleted(subId, topicId))
+    assert(Subscription.decide(deleted, DeleteSubscription) == Left(Rejection.SubscriptionNotFound))
+
+  test("deleting one that never existed is a rejection"):
+    assert(Subscription.decide(Subscription.empty, DeleteSubscription) == Left(Rejection.SubscriptionNotFound))
+
+  test("a deleted id cannot be taken again"):
+    // Mirrors topics. The journal for the id still exists, so recreating would
+    // resurrect the outstanding messages the delete just discarded.
+    val deleted = Subscription.evolve(live, SubscriptionDeleted(subId, topicId))
+    assert(Subscription.decide(deleted, CreateSubscription(subId, topicId)) == Left(Rejection.SubscriptionAlreadyExists))
+
+  test("deletion discards outstanding messages"):
+    // They were owned by this subscription alone; keeping them would leave a
+    // backlog nothing can ever acknowledge.
+    val withMessage = Subscription.evolve(live, MessageDelivered(ackId, message))
+    val _       = assert(withMessage.outstanding.nonEmpty)
+    val deleted = Subscription.evolve(withMessage, SubscriptionDeleted(subId, topicId))
+    assert(deleted.outstanding.isEmpty)
+
+  test("a deleted subscription accepts no further work"):
+    val deleted = Subscription.evolve(live, SubscriptionDeleted(subId, topicId))
+    val _ = assert(Subscription.decide(deleted, RecordDelivery(ackId, message)) == Left(Rejection.SubscriptionNotFound))
+    assert(Subscription.decide(deleted, Lease(10, 30.seconds, t0)) == Left(Rejection.SubscriptionNotFound))
+

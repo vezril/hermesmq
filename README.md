@@ -321,6 +321,7 @@ and survives restarts.
 |-----------------------------------------|----------------------------------------|--------|
 | `POST /v1/topics/{id}/messages`         | `{"payload":"…","attributes":{…}}`     | `202` `{messageId}` · `404` · `400` |
 | `POST /v1/subscriptions`                | `{"subscriptionId":"s1","topicId":"orders"}` | `201` · `409` |
+| `DELETE /v1/subscriptions/{id}`         | —                                      | `204` · `404` |
 | `POST /v1/subscriptions/{id}/pull`      | `{"max":10}`                           | `200` `{messages:[{ackId,payload,attributes,publishTime}]}` · `404` |
 | `POST /v1/subscriptions/{id}/ack`       | `{"ackIds":["…"]}`                     | `200` `{acknowledged,unknown}` |
 | `POST /v1/subscriptions/{id}/modifyAckDeadline` | `{"ackIds":["…"],"ackDeadlineSeconds":60}` | `200` `{modified,unknown}` · `404` |
