@@ -3,15 +3,28 @@ updates:
   # sbt library dependencies (build.sbt / project).
   - package-ecosystem: "sbt"
     directory: "/"
+    # Features flow feature -> development -> main. Without this, dependabot
+    # targets the repo default (main) and every merged bump puts main ahead of
+    # development, forcing a back-merge before the next release promotion.
+    target-branch: "development"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    ignore:
+      # sbt 2.x needs its plugins republished for the sbt2_3 axis: this build
+      # pins sbt-scoverage 2.2.2 and sbt-scalafix 0.13.0, whose sbt-2 artifacts
+      # do not exist (they start at scoverage 2.4.x / scalafix 0.14.x). A major
+      # sbt bump is therefore a deliberate migration -- sbt + both plugins in
+      # one change -- not a weekly automated PR.
+      - dependency-name: "org.scala-sbt:sbt"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions pinned in the workflows.
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
