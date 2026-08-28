@@ -5,7 +5,7 @@ addSbtPlugin("com.github.sbt" % "sbt-dynver" % "5.1.0")
 addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.10.4")
 
 // Statement coverage reporting (scoverage) — ungated report in CI.
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.2.2")
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.4.4")
 
 // Linting/refactoring rules (scalafix) — CI-gated via `scalafixAll --check`.
 addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.13.0")
