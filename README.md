@@ -5,20 +5,23 @@
 [![Docker Hub](https://img.shields.io/docker/v/calvinference/hermesmq?label=docker&sort=semver)](https://hub.docker.com/r/calvinference/hermesmq)
 [![License: MIT](https://img.shields.io/github/license/vezril/hermesmq)](LICENSE)
 
-A single-node, **event-sourced Pub/Sub message broker** built in Scala on
+An **event-sourced Pub/Sub message broker** built in Scala on
 [Apache Pekko](https://pekko.apache.org/).
 
 HermesMQ models topics and subscriptions as event-sourced aggregates: every state
 change is a journaled domain event, and that event log is the source of truth. A
 publish is acknowledged to the producer **only once its event is durably
 written**, and a restart replays the journal so accepted messages survive crashes
-and unacknowledged messages resume exactly where they left off. It targets
-single-node operation and is honest about its guarantees within that constraint —
-clustering and horizontal scaling are non-goals.
+and unacknowledged messages resume exactly where they left off. It runs as a
+single node or as a Pekko cluster over a shared journal, and is honest about its
+guarantees either way — see [Delivery guarantees](#delivery-guarantee-and-current-limits)
+and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 
-> **Status:** early development — the pieces below are being built feature by
-> feature via a spec-driven, test-first workflow (see the
-> [AI Usage Disclaimer](#ai-usage-disclaimer)).
+> **Status:** feature-complete for its intended scope — every capability below is
+> implemented, specified, and covered by tests. It has not yet been run as a
+> long-lived production deployment, and the [Roadmap](#roadmap) lists the
+> semantics that remain out of scope. Built feature by feature via a spec-driven,
+> test-first workflow (see the [AI Usage Disclaimer](#ai-usage-disclaimer)).
 
 ## Capabilities
 
@@ -47,6 +50,25 @@ clustering and horizontal scaling are non-goals.
 | Structured JSON logging (`LOG_FORMAT`, constellation schema) | ✅ Done |
 | Named consumers (optional consumer id + active-consumer metric) | ✅ Done |
 | Named producers (optional producer id + active-producer metric) | ✅ Done |
+| Request tracing (correlation id at the boundary + carried on the bus) | ✅ Done |
+| Polyglot clients: Python 3 and JavaScript (ESM) alongside Scala | ✅ Done |
+
+## Roadmap
+
+Everything in the table above is built. These are the known, deliberate gaps —
+listed here so the guarantees are legible without reading the whole document:
+
+| Not implemented | Why / what it would take |
+|-----------------|--------------------------|
+| **Exactly-once delivery** | Delivery is at-least-once. Consumers must be idempotent. Exactly-once would need consumer-side transactional ack coupling, which the current ack protocol does not model. |
+| **Back-delivery to new subscriptions** | A subscription created *after* a message was published never receives it — delivery starts from the subscription's creation point, and journal retention means old events may already be purged. |
+| **Rebuilding the topic→subscriptions index from the journal on restart** | The cluster-shared index is a durable read model maintained **forward** by a projection; it is not reconstructable from a from-zero replay once retention has purged events. |
+| **Per-topic / per-subscription TTL, and dead-letter-on-expiry** | TTL today is a global default plus a per-publish override, and expiry drops silently rather than leaving an audit trail. See [Message TTL](#message-ttl). |
+| **Cluster-wide aggregation of the consumer/producer gauges** | `hermesmq_subscription_consumers` and `hermesmq_topic_producers` are in-memory and **per-node** — exact on a single replica, partial across a cluster. The metric names and meanings would not change. |
+| **JWT/OIDC and mTLS auth** | Auth is static salted-hash API keys, to keep the broker dependency-light. `/metrics` is unauthenticated by design. See [Authentication](#authentication--multi-tenancy). |
+| **Versioned schema migrations** | Boot-time migration is idempotent *apply-the-current-schema*; destructive schema evolution would need a real migration tool. See [Schema self-migration](#schema-self-migration). |
+| **Multi-platform images** | Released images are `linux/amd64` only. |
+| **A coverage floor in CI** | scoverage is reported, not gated. See [Static analysis](#static-analysis). |
 
 ## Prerequisites
 
@@ -77,11 +99,17 @@ secret if the built-in token lacks cross-repo package read). No gRPC codegen run
 sbt test
 ```
 
-The suite includes a **Pekko smoke test** (`PingPongSpec`), route tests for the
-health endpoints via `pekko-http-testkit` (`HealthRoutesSpec`), a real-socket
-boot/shutdown test (`HttpServerSpec`), and config parsing tests
-(`ServiceConfigSpec`). Actor systems are shut down after each suite, so no
-dispatcher threads are left running.
+Every capability is covered test-first, across ~70 suites: domain aggregate
+`decide`/`evolve` laws, REST route tests via `pekko-http-testkit`, gRPC service
+tests, event-sourced persistence and serialization, delivery/redelivery/TTL
+behaviour, tracing at both the boundary and on the bus, and real-socket
+boot/shutdown (`HttpServerSpec`) plus config parsing (`ServiceConfigSpec`). Actor
+systems are shut down after each suite, so no dispatcher threads are left running.
+
+Unit tests run against an in-memory journal and need **no database**; the
+PostgreSQL integration tests are opt-in (see [Persistence](#persistence)). The
+Python and JavaScript clients have their own suites — see
+[`clients/README.md`](clients/README.md).
 
 ## Static analysis
 
@@ -357,12 +385,16 @@ warning) if no topic is configured. Consumers can extend a lease with
 `modifyAckDeadline`, or nack for immediate redelivery by sending
 `ackDeadlineSeconds: 0`.
 
-**Delivery guarantee (and current limits):** at-least-once. The `ackId` is
-deterministic per `(subscription, message)`, so a projection replay re-delivers
-idempotently and does not duplicate an outstanding message. Not yet implemented
-(planned): exactly-once, back-delivery of messages published before a subscription
-existed, and rebuilding the in-memory topic→subscriptions index from the journal on
-restart. REST payloads are treated as UTF-8 text.
+### Delivery guarantee (and current limits)
+
+**At-least-once.** The `ackId` is deterministic per `(subscription, message)`, so
+a projection replay re-delivers idempotently and does not duplicate an
+outstanding message — but a consumer must still tolerate seeing a message twice.
+REST payloads are treated as UTF-8 text.
+
+The guarantees HermesMQ does **not** offer — exactly-once, back-delivery to
+subscriptions created after a publish, and from-zero reconstruction of the
+subscription index — are listed with their rationale in the [Roadmap](#roadmap).
 
 ## gRPC API
 
@@ -492,6 +524,49 @@ so queries resolve identically across services: `@timestamp`, `level`,
 `logger_name`, `thread_name`, `message`, `service` (here `hermesmq`),
 `stack_trace` (on error), plus any MDC entries as top-level fields. This is a
 format-only concern — log levels and call sites are unchanged.
+
+### Request tracing
+
+A correlation id ties a broker log line back to the request that caused it, and
+ties a consumer's work back to the producer that published the message. HermesMQ
+plays **two distinct roles**, and the distinction matters:
+
+**At the request boundary — adopt or mint.** Every inbound REST call and gRPC RPC
+runs under a correlation id. An inbound id is **adopted** (`X-Correlation-Id` HTTP
+header / `x-correlation-id` gRPC metadata — the broker's callers are trusted
+internal services); a request arriving without one gets a fresh id **minted**, so
+the broker's own handling is always traceable. That id lands in the SLF4J MDC, so
+it appears as a top-level `correlationId` field on every JSON log line emitted
+while serving the call, and it is **echoed back** to the caller — on the HTTP
+response header, and on gRPC response metadata including trailers-only error
+responses. A failing request still carries its id.
+
+**On the bus — adopt only, never mint.** A message's correlation id belongs to the
+**producer**. `Publish` adopts `PublishRequest.correlation_id` (gRPC) or the
+`X-Correlation-Id` header (REST) and **journals it in the `MessagePublished`
+event**, so it survives replay, restart, and cross-node delivery rather than
+living in request memory. Every delivery — `Pull`, `StreamMessages`, `Consume` —
+returns it verbatim on `Message.correlation_id`. The broker never strips,
+overwrites, or invents a message's id: fan-out to ten subscriptions delivers the
+same id ten times, and a publish with no id delivers an empty one (the consumer
+decides whether to mint).
+
+All three names come from the shared
+[Lexicon](https://github.com/vezril/the-lexicon) constants, so every service in
+the constellation agrees on the vocabulary. All three client libraries expose it:
+`correlationId` on the Scala and JS publish options, `correlation_id` on the
+Python client, and on the received-message type in each.
+
+```bash
+# Adopted at the boundary, echoed back, and carried onto the message.
+curl -i -X POST localhost:8080/v1/topics/orders/messages \
+  -H 'Content-Type: application/json' -H 'X-Correlation-Id: req-42' \
+  -d '{"payload":"charge"}'                      # 202, response carries X-Correlation-Id: req-42
+
+curl -X POST localhost:8080/v1/subscriptions/s1/pull \
+  -H 'Content-Type: application/json' -d '{"max":10}'
+# -> {"messages":[{"ackId":"…","payload":"charge","correlationId":"req-42"}]}
+```
 
 ### Named consumers
 
@@ -672,8 +747,8 @@ cluster-shared read model (a `topic_subscriptions` table maintained by a
 projection over `SubscriptionCreated`), so a message published on any node is
 fanned out to **every** subscription of its topic regardless of which node
 created it. Both the delivery and subscription-index projections run as single
-cluster-wide instances. (Still at-least-once, and no back-delivery of messages
-published before a subscription existed.)
+cluster-wide instances. (Still at-least-once, and still no back-delivery to
+subscriptions created after a publish — see the [Roadmap](#roadmap).)
 
 ## Docker
 
@@ -793,11 +868,15 @@ build.sbt                    # multi-module build (domain / server / client)
 project/                     # pinned sbt version + plugins (dynver, native-packager)
 domain/                      # pure value types & aggregates (shared, no IO deps)
   src/…/me/cference/hermesmq/domain/
-server/                      # the service (config, http, persistence, delivery, cluster, Main) + Docker
-  src/…/me/cference/hermesmq/{config,http,persistence,delivery,cluster}
+server/                      # the service (config, http, grpc, persistence, delivery, cluster, tracing, Main) + Docker
+  src/…/me/cference/hermesmq/{config,http,grpc,persistence,delivery,cluster,tracing}
   src/main/resources/        # application.conf, logback.xml, schema/postgres.sql
 client/                      # the Scala client library (typed REST wrapper)
   src/…/me/cference/hermesmq/client/HermesClient.scala
+clients/                     # the non-JVM clients (own toolchains + test suites)
+  python/                    # hermesmq_client (Python 3)
+  js/                        # zero-dependency ESM client
+openspec/                    # the spec-driven workflow: canonical specs + archived changes
 .github/workflows/           # CI and release automation
 ```
 

@@ -42,7 +42,7 @@ lazy val pekkoVersion           = "1.2.0"
 lazy val pekkoHttpVersion       = "1.2.0"
 lazy val pekkoJdbcVersion       = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
 lazy val pekkoProjectionVersion = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
-lazy val scalaTestVersion       = "3.2.19"
+lazy val scalaTestVersion       = "3.2.20"
 // The gRPC contract is sourced from the Lexicon (change adopt-lexicon-grpc-contracts);
 // pinned exactly so a mismatch is a build error. This must be the-lexicon release
 // that first ships `lexicon-hermes-grpc` (its add-hermes-grpc-contract, expected
@@ -52,7 +52,7 @@ lazy val logbackVersion         = "1.5.16"
 lazy val logstashLogbackVersion = "8.0"
 lazy val sprayJsonVersion       = "1.3.6"
 lazy val postgresVersion        = "42.7.4"
-lazy val testcontainersVersion  = "1.20.4"
+lazy val testcontainersVersion  = "1.21.4"
 
 // Publish library artifacts (domain, client) to GitHub Packages.
 lazy val publishSettings = Seq(
