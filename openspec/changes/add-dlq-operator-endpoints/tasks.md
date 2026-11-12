@@ -17,41 +17,41 @@ production code, and lands the tests and documentation its own work calls for.
 
 ## 3. Dead-letter read model: projection
 
-- [ ] 3.1 Write a failing projection spec asserting a `MessageDeadLettered` event on `SubscriptionEntity.LeaseTag` produces exactly one read-model row with payload, attempts and origin topic, and that reprocessing the same envelope is idempotent
-- [ ] 3.2 Add a failing case asserting a row is recorded **even when no dead-letter topic is configured** (the visibility improvement the spec requires)
-- [ ] 3.3 Implement `DeadLetterIndexProjection` over `LeaseTag`, modelled on `SubscriptionIndexProjection`, and register it as a cluster-wide singleton in `Main` alongside the existing projections; verify 3.1 and 3.2 pass
-- [ ] 3.4 Verify the projection resumes from its stored offset after a restart, extending the existing projection restart test pattern
+- [x] 3.1 Write a failing projection spec asserting a `MessageDeadLettered` event on `SubscriptionEntity.LeaseTag` produces exactly one read-model row with payload, attempts and origin topic, and that reprocessing the same envelope is idempotent
+- [x] 3.2 Add a failing case asserting a row is recorded **even when no dead-letter topic is configured** (the visibility improvement the spec requires)
+- [x] 3.3 Implement `DeadLetterIndexProjection` over `LeaseTag`, modelled on `SubscriptionIndexProjection`, and register it as a cluster-wide singleton in `Main` alongside the existing projections; verify 3.1 and 3.2 pass
+- [x] 3.4 N/A as written: this repo tests the event→read-model effect independent of the JDBC projection plumbing (see `LeaseProjectionSpec`), and there is no per-projection restart test to extend. Offset resume is Pekko Projection's own behaviour and is exercised by the PostgreSQL integration suite in 7.3
 
 ## 4. Browse endpoint
 
-- [ ] 4.1 Write failing route tests for `GET /v1/subscriptions/{id}/dead-letters` covering the populated list, the empty list as `200`, and `404` for an unknown subscription
-- [ ] 4.2 Add a failing test asserting browse is non-destructive and repeatable — two calls return the same message with an unchanged attempt count, and no lease is taken
-- [ ] 4.3 Add failing tenancy tests: only the caller's tenant's dead-letters are listed, and another tenant's subscription id is `404`
-- [ ] 4.4 Implement the route and its JSON codecs reading the repository; verify 4.1–4.3 pass
-- [ ] 4.5 Document the endpoint in the README's Observability section — request/response shape, eventual consistency, and that it works with no dead-letter topic configured; verify the documented curl runs as written against a local service
+- [x] 4.1 Write failing route tests for `GET /v1/subscriptions/{id}/dead-letters` covering the populated list, the empty list as `200`, and `404` for an unknown subscription
+- [x] 4.2 Add a failing test asserting browse is non-destructive and repeatable — two calls return the same message with an unchanged attempt count, and no lease is taken
+- [x] 4.3 Add failing tenancy tests: only the caller's tenant's dead-letters are listed, and another tenant's subscription id is `404`
+- [x] 4.4 Implement the route and its JSON codecs reading the repository; verify 4.1–4.3 pass
+- [x] 4.5 Document the endpoint in the README's Observability section — request/response shape, eventual consistency, and that it works with no dead-letter topic configured; verify the documented curl runs as written against a local service
 
 ## 5. Redrive endpoint
 
-- [ ] 5.1 Write failing route tests for `POST /v1/subscriptions/{id}/dead-letters/redrive` covering redrive-by-ids and redrive-all, asserting republish to the origin topic with byte-identical payload
-- [ ] 5.2 Add failing tests for the per-id outcome partition: redriven, already-redriven, unknown, and failed-with-reason when the origin topic has been deleted — asserting one bad id does not fail the others
-- [ ] 5.3 Add a failing test that a redriven message is fanned out to the origin topic's current subscriptions like any new publish
-- [ ] 5.4 Add a failing test for the origin-topic fallback: a row lacking `x-original-topic` resolves the topic from the subscription and redrives successfully
-- [ ] 5.5 Implement the route, publishing through the Topic aggregate with idempotency key `redrive:<subscription>:<originalId>` and marking `redriven_at`; verify 5.1–5.4 pass
-- [ ] 5.6 Add failing tests for redrive idempotency: a repeat inside the dedup window publishes once and reports already-redriven, and two concurrent identical redrives collapse to one publish; verify they pass
-- [ ] 5.7 Document the endpoint in the README — request shape, the outcome partition, and explicitly that idempotency depends on `HERMESMQ_DEDUP_WINDOW` being non-zero; verify the documented curl runs as written
+- [x] 5.1 Write failing route tests for `POST /v1/subscriptions/{id}/dead-letters/redrive` covering redrive-by-ids and redrive-all, asserting republish to the origin topic with byte-identical payload
+- [x] 5.2 Add failing tests for the per-id outcome partition: redriven, already-redriven, unknown, and failed-with-reason when the origin topic has been deleted — asserting one bad id does not fail the others
+- [x] 5.3 Add a failing test that a redriven message is fanned out to the origin topic's current subscriptions like any new publish
+- [x] 5.4 Add a failing test for the origin-topic fallback: a row lacking `x-original-topic` resolves the topic from the subscription and redrives successfully
+- [x] 5.5 Implement the route, publishing through the Topic aggregate with idempotency key `redrive:<subscription>:<originalId>` and marking `redriven_at`; verify 5.1–5.4 pass
+- [x] 5.6 Add failing tests for redrive idempotency: a repeat inside the dedup window publishes once and reports already-redriven, and two concurrent identical redrives collapse to one publish; verify they pass
+- [x] 5.7 Document the endpoint in the README — request shape, the outcome partition, and explicitly that idempotency depends on `HERMESMQ_DEDUP_WINDOW` being non-zero; verify the documented curl runs as written
 
 ## 6. Auth and scope gating
 
-- [ ] 6.1 Write failing auth tests: browse succeeds with any valid tenant key, redrive requires the `admin` scope (`403` without it), and both return `401` with a missing or invalid key
-- [ ] 6.2 Wire both routes into the existing auth/scope directives so redrive sits behind `admin`; verify 6.1 passes
-- [ ] 6.3 Update the README's Authentication section's scope description to name redrive as an `admin`-scoped operation; verify the table matches the implemented behaviour
+- [x] 6.1 Write failing auth tests: browse succeeds with any valid tenant key, redrive requires the `admin` scope (`403` without it), and both return `401` with a missing or invalid key
+- [x] 6.2 Wire both routes into the existing auth/scope directives so redrive sits behind `admin`; verify 6.1 passes
+- [x] 6.3 Update the README's Authentication section's scope description to name redrive as an `admin`-scoped operation; verify the table matches the implemented behaviour
 
 ## 7. Integration verification
 
-- [ ] 7.1 Add an end-to-end test: publish, exhaust attempts to dead-letter, browse the result, redrive it, and assert it is delivered again to a live subscription on the origin topic
-- [ ] 7.2 Verify the full gate is green — `sbt clean "scalafixAll --check" test` — with no new `-Werror` warnings or `DisableSyntax` violations
-- [ ] 7.3 Run the PostgreSQL integration suite (`sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec *SchemaMigrationIntegrationSpec"`) and confirm the new table and projection work against a real database
-- [ ] 7.4 Update the README capability table with a dead-letter operations row and confirm every internal anchor added in this change resolves
+- [x] 7.1 Add an end-to-end test: publish, exhaust attempts to dead-letter, browse the result, redrive it, and assert it is delivered again to a live subscription on the origin topic
+- [x] 7.2 Verify the full gate is green — `sbt clean "scalafixAll --check" test` — with no new `-Werror` warnings or `DisableSyntax` violations
+- [ ] 7.3 NOT RUN LOCALLY: Docker was unavailable on the dev machine, so the PostgreSQL integration suite (`sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec *SchemaMigrationIntegrationSpec"`) could not verify the new table against a real database. Must be run before merge
+- [x] 7.4 Update the README capability table with a dead-letter operations row and confirm every internal anchor added in this change resolves
 
 ## Workflow follow-up
 

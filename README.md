@@ -52,6 +52,7 @@ and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 | Named producers (optional producer id + active-producer metric) | ✅ Done |
 | Request tracing (correlation id at the boundary + carried on the bus) | ✅ Done |
 | Polyglot clients: Python 3 and JavaScript (ESM) alongside Scala | ✅ Done |
+| Dead-letter operations: non-destructive browse + idempotent redrive | ✅ Done |
 
 ## Roadmap
 
@@ -67,6 +68,9 @@ listed here so the guarantees are legible without reading the whole document:
 | **Cluster-wide aggregation of the consumer/producer gauges** | `hermesmq_subscription_consumers` and `hermesmq_topic_producers` are in-memory and **per-node** — exact on a single replica, partial across a cluster. The metric names and meanings would not change. |
 | **JWT/OIDC and mTLS auth** | Auth is static salted-hash API keys, to keep the broker dependency-light. `/metrics` is unauthenticated by design. See [Authentication](#authentication--multi-tenancy). |
 | **Versioned schema migrations** | Boot-time migration is idempotent *apply-the-current-schema*; destructive schema evolution would need a real migration tool. See [Schema self-migration](#schema-self-migration). |
+| **Per-subscription dead-letter topic** | All subscriptions dead-letter to one global topic (`HERMESMQ_DEAD_LETTER_TOPIC`). Per-subscription routing would buy isolated retention/alerting per subscription; the [browse endpoint](#dead-letter-operations) already gives the per-subscription *view*, so this is marginal. |
+| **Pagination of the dead-letter browse** | `GET /v1/subscriptions/{id}/dead-letters` returns everything the read model holds for the subscription. Needs pagination before it is pointed at a high-volume deployment. |
+| **Unconditional redrive idempotency** | Redrive's dedup rides `HERMESMQ_DEDUP_WINDOW`, which is `0s` (off) by default. See [Dead-letter operations](#dead-letter-operations). |
 | **Multi-platform images** | Released images are `linux/amd64` only. |
 | **A coverage floor in CI** | scoverage is reported, not gated. See [Static analysis](#static-analysis). |
 
@@ -279,8 +283,9 @@ probes and scraping.
 tenant uses is qualified internally (`<tenant>~<id>`), so two tenants can both use
 `orders` and never see each other's data. External ids may not contain `~`.
 
-**Scopes:** topic administration (create/update/delete) requires the `admin` scope;
-publish/consume/list require any valid key for the caller's tenant.
+**Scopes:** topic administration (create/update/delete) and dead-letter **redrive**
+require the `admin` scope; publish/consume/list and dead-letter **browse** require
+any valid key for the caller's tenant.
 
 Keys are stored as salted SHA-256 hashes — never the raw token. Generate one:
 
@@ -380,7 +385,8 @@ it. If the deadline lapses unacknowledged, a periodic sweeper
 redelivery, counting one delivery attempt. Once attempts reach
 `HERMESMQ_MAX_DELIVERY_ATTEMPTS` (`0` = unlimited) the message is **dead-lettered**:
 republished to `HERMESMQ_DEAD_LETTER_TOPIC` — carrying `x-dead-letter-subscription`,
-`x-delivery-attempts`, and `x-original-message-id` headers — or dropped (with a
+`x-original-topic`, `x-delivery-attempts`, and `x-original-message-id` headers
+(see [Dead-letter operations](#dead-letter-operations)) — or dropped (with a
 warning) if no topic is configured. Consumers can extend a lease with
 `modifyAckDeadline`, or nack for immediate redelivery by sending
 `ackDeadlineSeconds: 0`.
@@ -567,6 +573,59 @@ curl -X POST localhost:8080/v1/subscriptions/s1/pull \
   -H 'Content-Type: application/json' -d '{"max":10}'
 # -> {"messages":[{"ackId":"…","payload":"charge","correlationId":"req-42"}]}
 ```
+
+### Dead-letter operations
+
+`deadLetteredTotal` tells you *that* messages died; these two endpoints tell you
+**which**, and put them back.
+
+| Method & path | Body | Result |
+|---|---|---|
+| `GET /v1/subscriptions/{id}/dead-letters` | — | `200` `[{originalMessageId, originTopic, payload, attributes, deliveryAttempts, deadLetteredAt, redrivenAt?}]` · `404` |
+| `POST /v1/subscriptions/{id}/dead-letters/redrive` | `{"messageIds":["…"]}` or `{"all":true}` | `200` `{redriven, alreadyRedriven, unknown, failed:[{messageId,reason}]}` · `400` · `403` · `404` |
+
+**Browse is a peek, not a pull.** It reads a durable read model, so it takes no
+lease, counts no delivery attempt, and does not compete with a consumer of the
+dead-letter topic. It is safe to poll from an operator console, and repeatable.
+
+**Redrive republishes to the origin topic** — the one recorded as
+`x-original-topic` when the message was dead-lettered, falling back to the
+subscription's topic for dead-letters written before that attribute existed. Each
+id is reported independently, so one failure (a deleted origin topic, say) does
+not sink the rest of the batch. A redriven message is fanned out like any new
+publish.
+
+```bash
+curl localhost:8080/v1/subscriptions/s1/dead-letters
+# [{"originalMessageId":"m-1","originTopic":"orders","payload":"charge","deliveryAttempts":5,...}]
+
+curl -X POST localhost:8080/v1/subscriptions/s1/dead-letters/redrive \
+  -H 'Content-Type: application/json' -d '{"messageIds":["m-1"]}'
+# {"redriven":["m-1"],"alreadyRedriven":[],"unknown":[],"failed":[]}
+
+curl -X POST localhost:8080/v1/subscriptions/s1/dead-letters/redrive \
+  -H 'Content-Type: application/json' -d '{"all":true}'   # redrive everything
+```
+
+> **Idempotency caveat — read this before wiring a "redrive all" button.** Redrive
+> publishes with an idempotency key derived from the original message id, so a
+> repeat is collapsed by the same dedup machinery as a retried publish. That
+> dedup is bounded by `HERMESMQ_DEDUP_WINDOW`, **which is `0s` (off) by
+> default** — with dedup disabled, the only guard is the `redrivenAt` marker on
+> the read model, which is eventually consistent. Set a non-zero dedup window if
+> operators will redrive interactively.
+
+**Visible even with no dead-letter topic configured.** The read model is built
+from the subscription journal's dead-letter events, which are journaled whether or
+not `HERMESMQ_DEAD_LETTER_TOPIC` is set. Where the broker would otherwise drop an
+exhausted message with only a warning log, browse still shows it and redrive can
+still replay it.
+
+Like the other read models here it is **eventually consistent** and maintained
+**forward**: a message dead-lettered moments ago may not have landed yet, and
+dead-letters that predate this feature are not visible (journal retention means
+they cannot be backfilled). Both endpoints return `200` with an empty result
+rather than erroring in those cases.
 
 ### Named consumers
 
