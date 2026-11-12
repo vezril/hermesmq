@@ -23,7 +23,7 @@ permissions:
 jobs:
   build:
     name: Compile & Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       # Resolve io.codex %% lexicon-hermes-grpc from the-lexicon's GitHub Packages.
       # The built-in token may lack cross-repo package read; if so, set a
@@ -56,6 +56,50 @@ jobs:
       - name: Test
         run: sbt -v test
 
+  # The PostgreSQL integration suites (Testcontainers) are tagged `PostgresIT`
+  # and excluded from the default `sbt test`, so until now they only ever ran
+  # when someone remembered to run them locally -- the schema DDL and every JDBC
+  # repository were unexercised in CI. This job runs them on every PR.
+  #
+  # A SEPARATE, non-required job: it pulls a postgres:16-alpine image, so
+  # registry or Docker flakiness surfaces here as a red advisory job rather than
+  # blocking merges on the `Compile & Test` check. Add it to branch protection to
+  # make it gating.
+  integration:
+    name: Integration (PostgreSQL)
+    runs-on: ubuntu-26.04
+    env:
+      GITHUB_TOKEN: ${{ secrets.LEXICON_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout (full history for sbt-dynver)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 (Temurin) with sbt cache
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # The suites self-skip when Docker is unavailable, which would make this
+      # job pass green while testing nothing. Fail loudly instead.
+      - name: Verify Docker is available
+        run: docker info
+
+      # -Dit=true lifts the PostgresIT tag exclusion (see build.sbt).
+      - name: Integration tests (Testcontainers PostgreSQL)
+        run: >
+          sbt -v -Dit=true "testOnly
+          *PostgresPersistenceIntegrationSpec
+          *SchemaMigrationIntegrationSpec
+          *ObservabilityIntegrationSpec
+          *DeadLetterRepositoryIntegrationSpec"
+
   # Auto-publish a snapshot on every push to `development`. This is a SEPARATE,
   # non-required job: registry hiccups (a Docker Hub 504, an already-published
   # 409) surface here as a red advisory job without ever blocking a PR merge,
@@ -65,7 +109,7 @@ jobs:
     name: Publish dev snapshot
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/development'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       # 'true' only when Docker Hub secrets are configured, so the image push is
       # skipped (not failed) until the secrets are added.
@@ -130,7 +174,7 @@ jobs:
   # its own non-required job so it never blocks a merge on an immature suite.
   coverage:
     name: Coverage report
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       GITHUB_TOKEN: ${{ secrets.LEXICON_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
@@ -154,7 +198,7 @@ jobs:
   # stub server, no broker).
   python-client:
     name: Python client
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: clients/python
@@ -176,7 +220,7 @@ jobs:
   # installed here.
   js-client:
     name: JS client
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: clients/js
@@ -194,7 +238,7 @@ jobs:
   # can't fail the compile gate.
   gitleaks:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v7

@@ -74,6 +74,7 @@ final class SchemaMigrationIntegrationSpec extends AnyWordSpec with Matchers wit
       val _ = tableExists("snapshot") shouldBe true
       val _ = tableExists("topic_stats") shouldBe true
       val _ = tableExists("expiring_messages") shouldBe true
+      val _ = tableExists("subscription_dead_letters") shouldBe true
 
       // Re-running over the now-provisioned schema is a harmless no-op.
       val _ = SchemaMigrator.migrate(dbConfig) shouldBe Right(())
