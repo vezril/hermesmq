@@ -69,8 +69,6 @@ listed here so the guarantees are legible without reading the whole document:
 | **JWT/OIDC and mTLS auth** | Auth is static salted-hash API keys, to keep the broker dependency-light. `/metrics` is unauthenticated by design. See [Authentication](#authentication--multi-tenancy). |
 | **Versioned schema migrations** | Boot-time migration is idempotent *apply-the-current-schema*; destructive schema evolution would need a real migration tool. See [Schema self-migration](#schema-self-migration). |
 | **Per-subscription dead-letter topic** | All subscriptions dead-letter to one global topic (`HERMESMQ_DEAD_LETTER_TOPIC`). Per-subscription routing would buy isolated retention/alerting per subscription; the [browse endpoint](#dead-letter-operations) already gives the per-subscription *view*, so this is marginal. |
-| **Pagination of the dead-letter browse** | `GET /v1/subscriptions/{id}/dead-letters` returns everything the read model holds for the subscription. Needs pagination before it is pointed at a high-volume deployment. |
-| **Unconditional redrive idempotency** | Redrive's dedup rides `HERMESMQ_DEDUP_WINDOW`, which is `0s` (off) by default. See [Dead-letter operations](#dead-letter-operations). |
 | **Multi-platform images** | Released images are `linux/amd64` only. |
 | **A coverage floor in CI** | scoverage is reported, not gated. See [Static analysis](#static-analysis). |
 
@@ -594,10 +592,19 @@ curl -X POST localhost:8080/v1/subscriptions/s1/pull \
 `deadLetteredTotal` tells you *that* messages died; these two endpoints tell you
 **which**, and put them back.
 
-| Method & path | Body | Result |
+| Method & path | Body / query | Result |
 |---|---|---|
-| `GET /v1/subscriptions/{id}/dead-letters` | — | `200` `[{originalMessageId, originTopic, payload, attributes, deliveryAttempts, deadLetteredAt, redrivenAt?}]` · `404` |
-| `POST /v1/subscriptions/{id}/dead-letters/redrive` | `{"messageIds":["…"]}` or `{"all":true}` | `200` `{redriven, alreadyRedriven, unknown, failed:[{messageId,reason}]}` · `400` · `403` · `404` |
+| `GET /v1/subscriptions/{id}/dead-letters` | `?limit=50&cursor=…` | `200` `{deadLetters:[{originalMessageId, originTopic, payload, attributes, deliveryAttempts, deadLetteredAt, redrivenAt?}], nextCursor?}` · `400` bad cursor · `404` |
+| `POST /v1/subscriptions/{id}/dead-letters/redrive` | `{"messageIds":["…"]}` or `{"all":true}`, optional `"force":true` | `200` `{redriven, alreadyRedriven, unknown, failed:[{messageId,reason}]}` · `400` · `403` · `404` |
+
+**Paging.** Browse returns a bounded page, newest first — `limit` defaults to `50`
+and clamps at `500`. When more remain the response carries `nextCursor`; pass it
+back to continue, and an absent cursor means the walk is done. Paging is keyset
+based on `(deadLetteredAt, originalMessageId)`, so a dead-letter arriving
+mid-walk cannot make the next page skip or repeat an entry — which an `OFFSET`
+walk would, and dead-letters arrive exactly when you are paging through them. The
+cursor is opaque; a cursor the service did not issue is a `400`, not a silent
+restart.
 
 **Browse is a peek, not a pull.** It reads a durable read model, so it takes no
 lease, counts no delivery attempt, and does not compete with a consumer of the
@@ -611,8 +618,12 @@ not sink the rest of the batch. A redriven message is fanned out like any new
 publish.
 
 ```bash
-curl localhost:8080/v1/subscriptions/s1/dead-letters
-# [{"originalMessageId":"m-1","originTopic":"orders","payload":"charge","deliveryAttempts":5,...}]
+curl 'localhost:8080/v1/subscriptions/s1/dead-letters?limit=2'
+# {"deadLetters":[{"originalMessageId":"m-1","originTopic":"orders","payload":"charge",...}],
+#  "nextCursor":"MTc2ND..."}
+
+# continue the walk
+curl 'localhost:8080/v1/subscriptions/s1/dead-letters?limit=2&cursor=MTc2ND...'
 
 curl -X POST localhost:8080/v1/subscriptions/s1/dead-letters/redrive \
   -H 'Content-Type: application/json' -d '{"messageIds":["m-1"]}'
@@ -622,13 +633,20 @@ curl -X POST localhost:8080/v1/subscriptions/s1/dead-letters/redrive \
   -H 'Content-Type: application/json' -d '{"all":true}'   # redrive everything
 ```
 
-> **Idempotency caveat — read this before wiring a "redrive all" button.** Redrive
-> publishes with an idempotency key derived from the original message id, so a
-> repeat is collapsed by the same dedup machinery as a retried publish. That
-> dedup is bounded by `HERMESMQ_DEDUP_WINDOW`, **which is `0s` (off) by
-> default** — with dedup disabled, the only guard is the `redrivenAt` marker on
-> the read model, which is eventually consistent. Set a non-zero dedup window if
-> operators will redrive interactively.
+**Idempotency needs no configuration.** Redrive *claims* each entry with an
+atomic compare-and-swap on its `redrivenAt` stamp before publishing, so exactly
+one of several concurrent or repeated redrives publishes and the rest report
+`alreadyRedriven`. This holds with `HERMESMQ_DEDUP_WINDOW` at its `0s` default —
+the publish-dedup key is still passed as a second line of defence, but it is no
+longer the guarantee. A failed publish releases the claim, so a plain retry works
+once you have fixed the cause.
+
+> **When you need `force`.** Claiming before publishing is deliberate: the
+> alternative ordering risks publishing a message twice, while this one risks an
+> entry left claimed by a process that died before publishing. That entry reports
+> `alreadyRedriven` forever, so `{"force": true}` claims regardless of an existing
+> stamp. It is explicit precisely because it can produce duplicates — the safe
+> path stays the default.
 
 **Visible even with no dead-letter topic configured.** The read model is built
 from the subscription journal's dead-letter events, which are journaled whether or
@@ -975,6 +993,26 @@ Flow: branch `feature/<topic>` off `development` → open a PR into `development
 Direct pushes to `main` and `development` are disallowed by branch protection
 (see [Required GitHub settings](#required-github-settings)); all changes go
 through a reviewed, CI-checked pull request.
+
+### Back-merging after a release
+
+Merging `development` into `main` creates a merge commit that exists **only** on
+`main`. Nothing carries it back, so without intervention the branches drift apart
+by one commit per release and "what is unreleased?" stops having a clean answer.
+
+GitHub cannot fast-forward a pull request — the options are merge, squash, and
+rebase — and `main` requires a PR with `enforce_admins`, so a direct
+fast-forward push is not available either. Removing that gate to avoid a merge
+commit would trade a real safeguard for a cosmetic one.
+
+Instead, [`sync-main.yml`](.github/workflows/sync-main.yml) opens a back-merge PR
+automatically on every push to `main`, so the sync is impossible to forget rather
+than merely remembered. It is a no-op when `development` already contains
+everything on `main`, reuses its open PR instead of stacking duplicates, and
+**does not auto-merge** — CI runs and a human merges, so `development`'s branch
+protection still applies. A merge conflict there is a real signal (`main`
+received a commit that never went through `development`) and fails the run rather
+than being force-resolved.
 
 ## Versioning
 

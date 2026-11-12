@@ -115,7 +115,7 @@ final class DeadLetterRepositoryIntegrationSpec
       val _ = assume(dockerAvailable, "Docker is not available")
       repo.record(entry("it-s3", "it-m-3", Some("it-orders"))).futureValue
       repo.record(entry("it-s3", "it-m-3", Some("it-orders")).copy(deliveryAttempts = 99)).futureValue
-      val listed = repo.listFor(sid("it-s3")).futureValue
+      val listed = repo.listFor(sid("it-s3"), 100, None).futureValue.entries
       val _      = listed.size shouldBe 1
       listed.head.deliveryAttempts shouldBe 5
     }
@@ -124,7 +124,7 @@ final class DeadLetterRepositoryIntegrationSpec
       val _ = assume(dockerAvailable, "Docker is not available")
       repo.record(entry("it-s4", "it-m-4", Some("it-orders"))).futureValue
       val at = t0.plusSeconds(90)
-      repo.markRedriven(sid("it-s4"), mid("it-m-4"), at).futureValue
+      val _ = repo.claimForRedrive(sid("it-s4"), mid("it-m-4"), at, force = false).futureValue shouldBe true
       repo.find(sid("it-s4"), mid("it-m-4")).futureValue.flatMap(_.redrivenAt) shouldBe Some(at)
     }
 
@@ -134,20 +134,64 @@ final class DeadLetterRepositoryIntegrationSpec
       repo.record(entry("it-s5", "it-new", Some("it-orders"), at = t0.plusSeconds(60))).futureValue
       repo.record(entry("it-s6", "it-other", Some("it-orders"))).futureValue
 
-      val _ = repo.listFor(sid("it-s5")).futureValue.map(_.originalMessageId) shouldBe
+      val _ = repo.listFor(sid("it-s5"), 100, None).futureValue.entries.map(_.originalMessageId) shouldBe
         List(mid("it-new"), mid("it-old"))
-      repo.listFor(sid("it-s6")).futureValue.map(_.originalMessageId) shouldBe List(mid("it-other"))
+      repo.listFor(sid("it-s6"), 100, None).futureValue.entries.map(_.originalMessageId) shouldBe List(mid("it-other"))
     }
 
     "return empty / None for a subscription with no dead-letters" taggedAs PostgresIT in {
       val _ = assume(dockerAvailable, "Docker is not available")
-      val _ = repo.listFor(sid("it-ghost")).futureValue shouldBe empty
+      val _ = repo.listFor(sid("it-ghost"), 100, None).futureValue.entries shouldBe empty
       repo.find(sid("it-ghost"), mid("it-nope")).futureValue shouldBe None
     }
 
-    "treat markRedriven on an absent row as a no-op" taggedAs PostgresIT in {
+    "treat a claim on an absent row as a no-op that wins nothing" taggedAs PostgresIT in {
       val _ = assume(dockerAvailable, "Docker is not available")
-      repo.markRedriven(sid("it-ghost"), mid("it-nope"), t0).futureValue
-      repo.listFor(sid("it-ghost")).futureValue shouldBe empty
+      val _ = repo.claimForRedrive(sid("it-ghost"), mid("it-nope"), t0, force = false).futureValue shouldBe false
+      repo.listFor(sid("it-ghost"), 100, None).futureValue.entries shouldBe empty
+    }
+
+    "claim exactly once when two callers race for the same entry" taggedAs PostgresIT in {
+      val _ = assume(dockerAvailable, "Docker is not available")
+      repo.record(entry("it-s7", "it-m-7", Some("it-orders"))).futureValue
+      // The conditional UPDATE is the only thing serialising these.
+      val both = scala.concurrent.Future
+        .sequence(
+          List(
+            repo.claimForRedrive(sid("it-s7"), mid("it-m-7"), t0, force = false),
+            repo.claimForRedrive(sid("it-s7"), mid("it-m-7"), t0, force = false)
+          )
+        )
+        .futureValue
+      both.count(identity) shouldBe 1
+    }
+
+    "release a claim so a retry can take it, and honour a forced claim" taggedAs PostgresIT in {
+      val _ = assume(dockerAvailable, "Docker is not available")
+      repo.record(entry("it-s8", "it-m-8", Some("it-orders"))).futureValue
+      val _ = repo.claimForRedrive(sid("it-s8"), mid("it-m-8"), t0, force = false).futureValue shouldBe true
+      repo.releaseClaim(sid("it-s8"), mid("it-m-8")).futureValue
+      val _ = repo.find(sid("it-s8"), mid("it-m-8")).futureValue.flatMap(_.redrivenAt) shouldBe None
+      val _ = repo.claimForRedrive(sid("it-s8"), mid("it-m-8"), t0, force = false).futureValue shouldBe true
+      // Already claimed: only force gets through.
+      val _ = repo.claimForRedrive(sid("it-s8"), mid("it-m-8"), t0, force = false).futureValue shouldBe false
+      repo.claimForRedrive(sid("it-s8"), mid("it-m-8"), t0.plusSeconds(5), force = true).futureValue shouldBe true
+    }
+
+    "page keyset-wise, including entries that share a dead-letter time" taggedAs PostgresIT in {
+      val _ = assume(dockerAvailable, "Docker is not available")
+      val shared = t0.plusSeconds(500)
+      repo.record(entry("it-s9", "it-p1", Some("it-orders"), at = shared)).futureValue
+      repo.record(entry("it-s9", "it-p2", Some("it-orders"), at = shared)).futureValue
+      repo.record(entry("it-s9", "it-p3", Some("it-orders"), at = shared.plusSeconds(1))).futureValue
+
+      val p1 = repo.listFor(sid("it-s9"), 2, None).futureValue
+      val _  = p1.entries.size shouldBe 2
+      val _  = p1.nextCursor shouldBe defined
+      val p2 = repo.listFor(sid("it-s9"), 2, p1.nextCursor).futureValue
+      val all = (p1.entries ++ p2.entries).map(_.originalMessageId.value)
+      val _   = all.size shouldBe 3
+      val _   = all.distinct.size shouldBe 3
+      all.head shouldBe "it-p3" // newest first
     }
   }

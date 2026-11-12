@@ -92,7 +92,7 @@ final class DeadLetterFlowSpec extends AnyWordSpec with Matchers with ScalatestR
       // 2. The operator sees it, without consuming it.
       val _ = Get("/v1/subscriptions/s1/dead-letters") ~> routes ~> check {
         val _     = status shouldBe StatusCodes.OK
-        val items = responseAs[String].parseJson.convertTo[List[JsObject]]
+        val items = responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]]
         val _     = items.size shouldBe 1
         val _     = items.head.fields("originalMessageId").convertTo[String] shouldBe "m-1"
         val _     = items.head.fields("originTopic").convertTo[String] shouldBe "orders"
@@ -122,6 +122,89 @@ final class DeadLetterFlowSpec extends AnyWordSpec with Matchers with ScalatestR
       topics.published.asScala.toList.count(_._1 == origin) shouldBe 1
     }
 
+    "walk a multi-page browse and redrive from the last page" in {
+      val deadLetters = InMemoryDeadLetterRepository()
+      val index       = InMemoryTopicSubscriptionsRepository()
+      val topics      = CapturingTopics()
+      await(index.add(origin, sub))
+
+      // Five dead-letters recorded through the projection effect, as the runtime would.
+      (1 to 5).foreach { i =>
+        val m = Message.from(MessageId.from(s"f-$i").toOption.get, s"body-$i".getBytes, Map.empty, t0).toOption.get
+        await(
+          DeadLetterIndexProjection.indexEvent(
+            deadLetters,
+            sub,
+            Some(origin),
+            deadAt.plusSeconds(i.toLong),
+            SubscriptionEvent.MessageDeadLettered(ackId, m, 5)
+          )
+        )
+      }
+
+      val routes = Route.seal(DeadLetterRoutes(deadLetters, subService, topics, index, admin, scope).routes)
+
+      def page(cursor: Option[String]) =
+        val q = cursor.fold("?limit=2")(c => s"?limit=2&cursor=$c")
+        var ids: List[String]    = Nil
+        var next: Option[String] = None
+        Get(s"/v1/subscriptions/s1/dead-letters$q") ~> routes ~> check {
+          val body = responseAs[String].parseJson.asJsObject
+          ids = body.fields("deadLetters").convertTo[List[JsObject]].map(_.fields("originalMessageId").convertTo[String])
+          next = body.fields.get("nextCursor").map(_.convertTo[String])
+        }
+        (ids, next)
+
+      val (p1, c1) = page(None)
+      val (p2, c2) = page(c1)
+      val (p3, c3) = page(c2)
+      val walked   = p1 ++ p2 ++ p3
+      val _        = walked.size shouldBe 5
+      val _        = walked.distinct.size shouldBe 5
+      val _        = c3 shouldBe None
+
+      // Redrive the oldest entry, which only the last page surfaced.
+      val oldest = walked.last
+      val _ = Post(
+        "/v1/subscriptions/s1/dead-letters/redrive",
+        json(s"""{"messageIds":["$oldest"]}""")
+      ) ~> routes ~> check {
+        val _ = status shouldBe StatusCodes.OK
+        responseAs[String].parseJson.asJsObject.fields("redriven").convertTo[List[String]] shouldBe List(oldest)
+      }
+      topics.published.asScala.toList.map(_._1) shouldBe List(origin)
+    }
+
+    "publish exactly once when two redrives of the same entry race" in {
+      val deadLetters = InMemoryDeadLetterRepository()
+      val index       = InMemoryTopicSubscriptionsRepository()
+      val topics      = CapturingTopics()
+      await(index.add(origin, sub))
+      await(
+        DeadLetterIndexProjection.indexEvent(
+          deadLetters,
+          sub,
+          Some(origin),
+          deadAt,
+          SubscriptionEvent.MessageDeadLettered(ackId, original, 5)
+        )
+      )
+
+      val routes = Route.seal(DeadLetterRoutes(deadLetters, subService, topics, index, admin, scope).routes)
+
+      // Two sequential requests stand in for the race the claim serialises; the
+      // repository-level concurrency test covers the genuinely parallel case.
+      val outcomes = (1 to 2).map { _ =>
+        var redriven: List[String] = Nil
+        Post("/v1/subscriptions/s1/dead-letters/redrive", json("""{"all":true}""")) ~> routes ~> check {
+          redriven = responseAs[String].parseJson.asJsObject.fields("redriven").convertTo[List[String]]
+        }
+        redriven
+      }
+      val _ = outcomes.count(_.nonEmpty) shouldBe 1
+      topics.published.asScala.size shouldBe 1
+    }
+
     "record and redrive a dead-letter even when no dead-letter topic is configured" in {
       val deadLetters = InMemoryDeadLetterRepository()
       val index       = InMemoryTopicSubscriptionsRepository()
@@ -142,7 +225,7 @@ final class DeadLetterFlowSpec extends AnyWordSpec with Matchers with ScalatestR
 
       val _ = Get("/v1/subscriptions/s1/dead-letters") ~> routes ~> check {
         val _ = status shouldBe StatusCodes.OK
-        responseAs[String].parseJson.convertTo[List[JsObject]].size shouldBe 1
+        responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]].size shouldBe 1
       }
 
       val _ = Post("/v1/subscriptions/s1/dead-letters/redrive", json("""{"all":true}""")) ~> routes ~> check {
