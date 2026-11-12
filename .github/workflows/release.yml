@@ -15,7 +15,7 @@ permissions:
 jobs:
   release:
     name: Build, Publish & Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Every sbt step (the test gate, publish, Docker) resolves the Lexicon gRPC
     # stubs (io.codex %% lexicon-hermes-grpc) from the-lexicon's GitHub Packages,
     # so the read:packages token must be present job-wide, not only on publish.
