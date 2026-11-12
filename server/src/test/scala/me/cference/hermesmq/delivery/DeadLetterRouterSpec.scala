@@ -35,8 +35,15 @@ final class DeadLetterRouterSpec extends AnyWordSpec with Matchers:
         case _                       => Future.successful(CommandReply.Accepted)
     def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None)
 
-  private def route(topics: TopicService, dlt: Option[TopicId], event: SubscriptionEvent) =
-    await(DeadLetterRouter.route(topics, dlt, sub, event))
+  private val originTopic = TopicId.from("orders").toOption.get
+
+  private def route(
+      topics: TopicService,
+      dlt: Option[TopicId],
+      event: SubscriptionEvent,
+      origin: Option[TopicId] = Some(originTopic)
+  ) =
+    await(DeadLetterRouter.route(topics, dlt, sub, origin, event))
 
   "DeadLetterRouter.route" should {
     "republish an exhausted message to the configured topic with dead-letter headers, preserving the payload" in {
@@ -50,6 +57,23 @@ final class DeadLetterRouterSpec extends AnyWordSpec with Matchers:
       val _ = republished.attributes("x-delivery-attempts") shouldBe "5"
       val _ = republished.attributes("x-original-message-id") shouldBe origId.value
       republished.attributes("k") shouldBe "v" // original attributes retained
+    }
+
+    "record the origin topic so a replay is self-contained" in {
+      val topics = CapturingTopics()
+      val _ = route(topics, Some(dlTopic), SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
+
+      val (_, republished) = topics.published.asScala.head
+      republished.attributes("x-original-topic") shouldBe originTopic.value
+    }
+
+    "omit the origin-topic attribute when the origin topic cannot be resolved" in {
+      val topics = CapturingTopics()
+      val _ = route(topics, Some(dlTopic), SubscriptionEvent.MessageDeadLettered(ackId, message, 5), origin = None)
+
+      val (_, republished) = topics.published.asScala.head
+      val _ = republished.attributes.contains("x-original-topic") shouldBe false
+      republished.attributes("x-dead-letter-subscription") shouldBe sub.value
     }
 
     "drop the message (no republish) when no dead-letter topic is configured" in {

@@ -36,7 +36,13 @@ object DeadLetterProjection:
       case Array("Subscription", id) => SubscriptionId.from(id).toOption
       case _                         => None
 
-  def apply(system: ActorSystem[?], dbConfig: DbConfig, topics: TopicService, deadLetterTopic: Option[TopicId]) =
+  def apply(
+      system: ActorSystem[?],
+      dbConfig: DbConfig,
+      topics: TopicService,
+      subscriptions: TopicSubscriptionsRepository,
+      deadLetterTopic: Option[TopicId]
+  ) =
     val sourceProvider: SourceProvider[Offset, EventEnvelope[SubscriptionEvent]] =
       EventSourcedProvider.eventsByTag[SubscriptionEvent](
         system,
@@ -48,15 +54,24 @@ object DeadLetterProjection:
       projectionId = ProjectionId(ProjectionName, SubscriptionEntity.LeaseTag),
       sourceProvider = sourceProvider,
       sessionFactory = () => new HermesJdbcSession(dbConfig),
-      handler = () => new Handler(topics, deadLetterTopic)(using system.executionContext)
+      handler = () => new Handler(topics, subscriptions, deadLetterTopic)(using system.executionContext)
     )(system)
 
-  private final class Handler(topics: TopicService, deadLetterTopic: Option[TopicId])(using ExecutionContext)
+  private final class Handler(
+      topics: TopicService,
+      subscriptions: TopicSubscriptionsRepository,
+      deadLetterTopic: Option[TopicId]
+  )(using ExecutionContext)
       extends JdbcHandler[EventEnvelope[SubscriptionEvent], HermesJdbcSession]:
 
     override def process(session: HermesJdbcSession, envelope: EventEnvelope[SubscriptionEvent]): Unit =
       subscriptionIdOf(envelope.persistenceId).foreach { subscriptionId =>
-        val outcome = Await.result(DeadLetterRouter.route(topics, deadLetterTopic, subscriptionId, envelope.event), 10.seconds)
+        // The origin topic is recorded on the dead-letter envelope so a redrive
+        // is self-contained. An unresolved topic must not block dead-lettering,
+        // so this degrades to None rather than failing the envelope.
+        val originTopic = Await.result(subscriptions.topicFor(subscriptionId), 10.seconds)
+        val outcome =
+          Await.result(DeadLetterRouter.route(topics, deadLetterTopic, subscriptionId, originTopic, envelope.event), 10.seconds)
         outcome match
           case DeadLetterOutcome.Published(topic, messageId) =>
             log.info("Dead-lettered message {} from {} republished to topic {}", messageId.value, subscriptionId.value, topic.value)
