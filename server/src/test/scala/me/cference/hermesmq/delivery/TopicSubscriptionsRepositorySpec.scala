@@ -38,3 +38,31 @@ final class TopicSubscriptionsRepositorySpec extends AnyFunSuite with Matchers w
   test("an unknown topic has no subscriptions") {
     InMemoryTopicSubscriptionsRepository().subscriptionsFor(tid("ghost")).futureValue shouldBe empty
   }
+
+  // The reverse lookup: dead-letter routing and redrive need a subscription's
+  // origin topic, and this read model is the only place that mapping is durable.
+
+  test("topicFor returns the topic a subscription belongs to") {
+    val repo = InMemoryTopicSubscriptionsRepository()
+    repo.add(tid("orders"), sid("s1")).futureValue
+    repo.topicFor(sid("s1")).futureValue shouldBe Some(tid("orders"))
+  }
+
+  test("topicFor distinguishes subscriptions across topics") {
+    val repo = InMemoryTopicSubscriptionsRepository()
+    repo.add(tid("orders"), sid("s1")).futureValue
+    repo.add(tid("billing"), sid("s2")).futureValue
+    val _ = repo.topicFor(sid("s1")).futureValue shouldBe Some(tid("orders"))
+    repo.topicFor(sid("s2")).futureValue shouldBe Some(tid("billing"))
+  }
+
+  test("topicFor on an unknown subscription is None, not an error") {
+    InMemoryTopicSubscriptionsRepository().topicFor(sid("ghost")).futureValue shouldBe None
+  }
+
+  test("topicFor stops resolving a subscription once it is removed") {
+    val repo = InMemoryTopicSubscriptionsRepository()
+    repo.add(tid("orders"), sid("s1")).futureValue
+    repo.remove(tid("orders"), sid("s1")).futureValue
+    repo.topicFor(sid("s1")).futureValue shouldBe None
+  }

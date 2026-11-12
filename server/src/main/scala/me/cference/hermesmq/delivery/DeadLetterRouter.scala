@@ -23,13 +23,24 @@ enum DeadLetterOutcome:
   */
 object DeadLetterRouter:
 
-  val SubscriptionHeader = "x-dead-letter-subscription"
-  val AttemptsHeader     = "x-delivery-attempts"
-  val OriginalIdHeader   = "x-original-message-id"
+  val SubscriptionHeader  = "x-dead-letter-subscription"
+  val AttemptsHeader      = "x-delivery-attempts"
+  val OriginalIdHeader    = "x-original-message-id"
+  val OriginalTopicHeader = "x-original-topic"
 
-  /** Build the dead-letter envelope for an exhausted original message. */
+  /** Build the dead-letter envelope for an exhausted original message.
+    *
+    * `originTopic` is the topic the message was originally published to. It is
+    * recorded as [[OriginalTopicHeader]] so a redrive can republish without
+    * joining back through the subscription listing. It is an `Option` because a
+    * subscription whose topic cannot be resolved (for example, its index row has
+    * not been projected yet) must still dead-letter rather than lose the
+    * message -- the attribute is then omitted and the redrive path falls back to
+    * resolving the topic from the subscription.
+    */
   def deadLetterMessage(
       subscriptionId: SubscriptionId,
+      originTopic: Option[TopicId],
       original: Message,
       attempt: Int
   ): Either[ValidationError, Message] =
@@ -42,7 +53,7 @@ object DeadLetterRouter:
           SubscriptionHeader -> subscriptionId.value,
           AttemptsHeader     -> attempt.toString,
           OriginalIdHeader   -> original.id.value
-        ),
+        ) ++ originTopic.map(t => OriginalTopicHeader -> t.value),
         original.publishTime
       )
     yield msg
@@ -54,13 +65,14 @@ object DeadLetterRouter:
       topics: TopicService,
       deadLetterTopic: Option[TopicId],
       subscriptionId: SubscriptionId,
+      originTopic: Option[TopicId],
       event: SubscriptionEvent
   )(using ExecutionContext): Future[DeadLetterOutcome] =
     event match
       case SubscriptionEvent.MessageDeadLettered(_, message, attempt) =>
         deadLetterTopic match
           case Some(topic) =>
-            deadLetterMessage(subscriptionId, message, attempt) match
+            deadLetterMessage(subscriptionId, originTopic, message, attempt) match
               case Right(dl) => topics.submit(topic, TopicCommand.Publish(dl)).map(_ => DeadLetterOutcome.Published(topic, dl.id))
               case Left(_)   => Future.successful(DeadLetterOutcome.Dropped(subscriptionId, message.id))
           case None => Future.successful(DeadLetterOutcome.Dropped(subscriptionId, message.id))
