@@ -23,7 +23,7 @@ permissions:
 jobs:
   build:
     name: Compile & Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       # Resolve io.codex %% lexicon-hermes-grpc from the-lexicon's GitHub Packages.
       # The built-in token may lack cross-repo package read; if so, set a
@@ -65,7 +65,7 @@ jobs:
     name: Publish dev snapshot
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/development'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       # 'true' only when Docker Hub secrets are configured, so the image push is
       # skipped (not failed) until the secrets are added.
@@ -130,7 +130,7 @@ jobs:
   # its own non-required job so it never blocks a merge on an immature suite.
   coverage:
     name: Coverage report
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       GITHUB_TOKEN: ${{ secrets.LEXICON_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
@@ -154,7 +154,7 @@ jobs:
   # stub server, no broker).
   python-client:
     name: Python client
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: clients/python
@@ -176,7 +176,7 @@ jobs:
   # installed here.
   js-client:
     name: JS client
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: clients/js
@@ -194,7 +194,7 @@ jobs:
   # can't fail the compile gate.
   gitleaks:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v7
