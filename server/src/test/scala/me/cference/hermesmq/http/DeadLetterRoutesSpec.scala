@@ -99,7 +99,7 @@ final class DeadLetterRoutesSpec extends AnyWordSpec with Matchers with Scalates
         repoWith(entry("s1", "m-1"), entry("s1", "m-2", at = t0.plusSeconds(60)))
       ) ~> check {
         val _ = status shouldBe StatusCodes.OK
-        val items = responseAs[String].parseJson.convertTo[List[JsObject]]
+        val items = responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]]
         val _     = items.size shouldBe 2
         // Most recently dead-lettered first.
         val _ = items.head.fields("originalMessageId").convertTo[String] shouldBe "m-2"
@@ -116,7 +116,7 @@ final class DeadLetterRoutesSpec extends AnyWordSpec with Matchers with Scalates
       val _ = Get("/v1/subscriptions/s1/dead-letters") ~> route ~> check { status shouldBe StatusCodes.OK }
       Get("/v1/subscriptions/s1/dead-letters") ~> route ~> check {
         val _ = status shouldBe StatusCodes.OK
-        val items = responseAs[String].parseJson.convertTo[List[JsObject]]
+        val items = responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]]
         val _     = items.size shouldBe 1
         items.head.fields("deliveryAttempts").convertTo[Int] shouldBe 5
       }
@@ -125,14 +125,14 @@ final class DeadLetterRoutesSpec extends AnyWordSpec with Matchers with Scalates
     "return an empty list for a subscription with no dead-letters" in {
       Get("/v1/subscriptions/s1/dead-letters") ~> routes() ~> check {
         val _ = status shouldBe StatusCodes.OK
-        responseAs[String].parseJson.convertTo[List[JsObject]] shouldBe empty
+        responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]] shouldBe empty
       }
     }
 
     "list dead-letters recorded with no origin topic" in {
       Get("/v1/subscriptions/s1/dead-letters") ~> routes(deadLetters = repoWith(entry("s1", "m-1", origin = None))) ~> check {
         val _ = status shouldBe StatusCodes.OK
-        val items = responseAs[String].parseJson.convertTo[List[JsObject]]
+        val items = responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]]
         items.head.fields.contains("originTopic") shouldBe false
       }
     }
@@ -164,7 +164,66 @@ final class DeadLetterRoutesSpec extends AnyWordSpec with Matchers with Scalates
         principal = Principal(otherTenant, Set("admin"))
       ) ~> check {
         val _ = status shouldBe StatusCodes.OK
-        responseAs[String].parseJson.convertTo[List[JsObject]] shouldBe empty
+        responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]] shouldBe empty
+      }
+    }
+  }
+
+  "GET /v1/subscriptions/{id}/dead-letters pagination" should {
+    def entries(n: Int) =
+      (1 to n).map(i => entry("s1", s"m-$i", at = t0.plusSeconds(i.toLong * 60))).toList
+
+    "bound the page by limit and offer a cursor when more remain" in {
+      Get("/v1/subscriptions/s1/dead-letters?limit=2") ~> routes(deadLetters = repoWith(entries(3)*)) ~> check {
+        val _    = status shouldBe StatusCodes.OK
+        val body = responseAs[String].parseJson.asJsObject
+        val _    = body.fields("deadLetters").convertTo[List[JsObject]].size shouldBe 2
+        body.fields.get("nextCursor") shouldBe defined
+      }
+    }
+
+    "omit the cursor on the last page" in {
+      Get("/v1/subscriptions/s1/dead-letters?limit=5") ~> routes(deadLetters = repoWith(entries(3)*)) ~> check {
+        val _    = status shouldBe StatusCodes.OK
+        val body = responseAs[String].parseJson.asJsObject
+        val _    = body.fields("deadLetters").convertTo[List[JsObject]].size shouldBe 3
+        body.fields.get("nextCursor") shouldBe None
+      }
+    }
+
+    "walk every entry exactly once across pages" in {
+      val route = routes(deadLetters = repoWith(entries(5)*))
+      def page(cursor: Option[String]) =
+        val q = cursor.fold("?limit=2")(c => s"?limit=2&cursor=$c")
+        var ids: List[String] = Nil
+        var next: Option[String] = None
+        Get(s"/v1/subscriptions/s1/dead-letters$q") ~> route ~> check {
+          val body = responseAs[String].parseJson.asJsObject
+          ids = body.fields("deadLetters").convertTo[List[JsObject]].map(_.fields("originalMessageId").convertTo[String])
+          next = body.fields.get("nextCursor").map(_.convertTo[String])
+        }
+        (ids, next)
+
+      val (p1, c1) = page(None)
+      val (p2, c2) = page(c1)
+      val (p3, c3) = page(c2)
+      val all      = p1 ++ p2 ++ p3
+      val _        = all.size shouldBe 5
+      val _        = all.distinct.size shouldBe 5
+      val _        = c3 shouldBe None
+      all.head shouldBe "m-5" // newest first
+    }
+
+    "clamp an over-large limit rather than rejecting it" in {
+      Get("/v1/subscriptions/s1/dead-letters?limit=100000") ~> routes(deadLetters = repoWith(entries(3)*)) ~> check {
+        val _ = status shouldBe StatusCodes.OK
+        responseAs[String].parseJson.asJsObject.fields("deadLetters").convertTo[List[JsObject]].size shouldBe 3
+      }
+    }
+
+    "400 a cursor the service did not issue" in {
+      Get("/v1/subscriptions/s1/dead-letters?cursor=not-a-real-cursor") ~> routes() ~> check {
+        status shouldBe StatusCodes.BadRequest
       }
     }
   }
@@ -207,6 +266,60 @@ final class DeadLetterRoutesSpec extends AnyWordSpec with Matchers with Scalates
         val (_, msg) = topics.published.asScala.head
         msg.idempotencyKey shouldBe Some("redrive:s1:m-1")
       }
+    }
+
+    "stay idempotent with the dedup window at its default (off)" in {
+      // Nothing here configures HERMESMQ_DEDUP_WINDOW: the claim, not the publish
+      // dedup, is what must prevent the second publish.
+      val topics = CapturingTopics()
+      val repo   = repoWith(entry("s1", "m-1"))
+      val route  = routes(deadLetters = repo, topics = topics)
+      val _ = Post("/v1/subscriptions/s1/dead-letters/redrive", json("""{"all":true}""")) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.OK
+      }
+      val _ = Post("/v1/subscriptions/s1/dead-letters/redrive", json("""{"all":true}""")) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.OK
+      }
+      topics.published.asScala.size shouldBe 1
+    }
+
+    "republish an already-redriven entry when force is set" in {
+      val topics = CapturingTopics()
+      val repo   = repoWith(entry("s1", "m-1"))
+      val route  = routes(deadLetters = repo, topics = topics)
+      val _ = Post("/v1/subscriptions/s1/dead-letters/redrive", json("""{"messageIds":["m-1"]}""")) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.OK
+      }
+      val _ = Post(
+        "/v1/subscriptions/s1/dead-letters/redrive",
+        json("""{"messageIds":["m-1"],"force":true}""")
+      ) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.OK
+        responseAs[String].parseJson.asJsObject.fields("redriven").convertTo[List[String]] shouldBe List("m-1")
+      }
+      topics.published.asScala.size shouldBe 2
+    }
+
+    "release the claim when the publish fails, so a retry republishes" in {
+      val repo = repoWith(entry("s1", "m-1"))
+      // First attempt: the origin topic rejects, so the claim must be released.
+      val _ = Post("/v1/subscriptions/s1/dead-letters/redrive", json("""{"messageIds":["m-1"]}""")) ~> routes(
+        deadLetters = repo,
+        topics = CapturingTopics(reject = true)
+      ) ~> check {
+        val _ = status shouldBe StatusCodes.OK
+        responseAs[String].parseJson.asJsObject.fields("failed").convertTo[List[JsObject]].size shouldBe 1
+      }
+      // Retry against a healthy topic: it must publish, not report already-redriven.
+      val healthy = CapturingTopics()
+      val _ = Post("/v1/subscriptions/s1/dead-letters/redrive", json("""{"messageIds":["m-1"]}""")) ~> routes(
+        deadLetters = repo,
+        topics = healthy
+      ) ~> check {
+        val _ = status shouldBe StatusCodes.OK
+        responseAs[String].parseJson.asJsObject.fields("redriven").convertTo[List[String]] shouldBe List("m-1")
+      }
+      healthy.published.asScala.size shouldBe 1
     }
 
     "report an already-redriven message without republishing it" in {

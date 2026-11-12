@@ -27,7 +27,7 @@ final class DeadLetterIndexHandlerSpec extends AnyFunSuite with Matchers with Sc
     val repo = InMemoryDeadLetterRepository()
     index(repo, SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
 
-    val listed = repo.listFor(sub).futureValue
+    val listed = repo.listFor(sub, 100, None).futureValue.entries
     val _      = listed.size shouldBe 1
     val _      = listed.head.originalMessageId shouldBe origId
     val _      = listed.head.originTopic shouldBe Some(origin)
@@ -41,14 +41,14 @@ final class DeadLetterIndexHandlerSpec extends AnyFunSuite with Matchers with Sc
     val repo = InMemoryDeadLetterRepository()
     index(repo, SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
     index(repo, SubscriptionEvent.MessageDeadLettered(ackId, message, 5))
-    repo.listFor(sub).futureValue.size shouldBe 1
+    repo.listFor(sub, 100, None).futureValue.entries.size shouldBe 1
   }
 
   test("a dead-letter is recorded even when the origin topic is unresolved") {
     val repo = InMemoryDeadLetterRepository()
     index(repo, SubscriptionEvent.MessageDeadLettered(ackId, message, 5), originTopic = None)
 
-    val listed = repo.listFor(sub).futureValue
+    val listed = repo.listFor(sub, 100, None).futureValue.entries
     val _      = listed.size shouldBe 1
     listed.head.originTopic shouldBe None
   }
@@ -56,5 +56,5 @@ final class DeadLetterIndexHandlerSpec extends AnyFunSuite with Matchers with Sc
   test("non-dead-letter events are ignored") {
     val repo = InMemoryDeadLetterRepository()
     index(repo, SubscriptionEvent.MessageAcknowledged(ackId))
-    repo.listFor(sub).futureValue shouldBe empty
+    repo.listFor(sub, 100, None).futureValue.entries shouldBe empty
   }
