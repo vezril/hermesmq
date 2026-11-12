@@ -35,6 +35,19 @@ final case class DeadLetterEntry(
     redrivenAt: Option[Instant]
 )
 
+/** Position in a descending walk of a subscription's dead-letters.
+  *
+  * Carries the message id as well as the timestamp because `deadLetteredAt` is
+  * the journal envelope's time, so entries from one batch can share it -- a
+  * timestamp-only cursor would drop everything tied with the page boundary.
+  */
+final case class DeadLetterCursor(deadLetteredAt: Instant, originalMessageId: MessageId)
+
+/** One page of dead-letters, newest first. `nextCursor` is present only when
+  * more entries remain, so an absent cursor means the walk is done.
+  */
+final case class DeadLetterPage(entries: List[DeadLetterEntry], nextCursor: Option[DeadLetterCursor])
+
 /** The durable, cluster-shared dead-letter read model. Written by the
   * dead-letter index projection; read by the operator browse and redrive paths.
   */
@@ -45,13 +58,33 @@ trait DeadLetterRepository:
     */
   def record(entry: DeadLetterEntry): Future[Unit]
 
-  /** A subscription's dead-letters, most recently dead-lettered first. */
-  def listFor(subscriptionId: SubscriptionId): Future[List[DeadLetterEntry]]
+  /** One page of a subscription's dead-letters, most recently dead-lettered
+    * first. Keyset-paginated on `(deadLetteredAt DESC, originalMessageId DESC)`:
+    * `cursor` is the last position seen, `None` starts from the newest. Keyset
+    * rather than offset because dead-letters arrive precisely while an operator
+    * is paging through them, and an offset walk would then skip or repeat rows.
+    */
+  def listFor(subscriptionId: SubscriptionId, limit: Int, cursor: Option[DeadLetterCursor]): Future[DeadLetterPage]
 
   def find(subscriptionId: SubscriptionId, messageId: MessageId): Future[Option[DeadLetterEntry]]
 
-  /** Stamp an entry as redriven. A no-op for an entry that is not present. */
-  def markRedriven(subscriptionId: SubscriptionId, messageId: MessageId, at: Instant): Future[Unit]
+  /** Atomically claim an entry for redrive, returning whether this caller won it.
+    *
+    * This is the redrive idempotency guarantee: the claim is a compare-and-swap
+    * on `redrivenAt`, so exactly one of several concurrent redrives of the same
+    * entry may proceed to publish. It deliberately does NOT depend on the
+    * publish-dedup window (`HERMESMQ_DEDUP_WINDOW`), which defaults to off.
+    *
+    * `force` claims regardless of an existing stamp -- the escape hatch for an
+    * entry claimed by a caller that then died before publishing. False for an
+    * entry that does not exist.
+    */
+  def claimForRedrive(subscriptionId: SubscriptionId, messageId: MessageId, at: Instant, force: Boolean): Future[Boolean]
+
+  /** Release a claim, so a failed publish can be retried rather than leaving the
+    * entry permanently reported as already redriven.
+    */
+  def releaseClaim(subscriptionId: SubscriptionId, messageId: MessageId): Future[Unit]
 
 /** In-memory implementation for tests (and single-node fallbacks). */
 final class InMemoryDeadLetterRepository(using ExecutionContext) extends DeadLetterRepository:
@@ -64,24 +97,56 @@ final class InMemoryDeadLetterRepository(using ExecutionContext) extends DeadLet
       if m.contains(key(entry)) then m else m.updated(key(entry), entry)
     }).map(_ => ())
 
-  def listFor(subscriptionId: SubscriptionId): Future[List[DeadLetterEntry]] =
-    Future(
-      entries
+  def listFor(subscriptionId: SubscriptionId, limit: Int, cursor: Option[DeadLetterCursor]): Future[DeadLetterPage] =
+    Future {
+      val ordered = entries
         .get()
         .values
         .filter(_.subscriptionId == subscriptionId)
         .toList
-        .sortBy(_.deadLetteredAt)(using Ordering[Instant].reverse)
-    )
+        // Mirror the SQL ordering exactly, message id breaking a shared timestamp.
+        .sortBy(e => (e.deadLetteredAt, e.originalMessageId.value))(using
+          Ordering.Tuple2(Ordering[Instant], Ordering[String]).reverse
+        )
+      val after = cursor.fold(ordered) { c =>
+        ordered.dropWhile(e =>
+          (e.deadLetteredAt, e.originalMessageId.value) != ((c.deadLetteredAt, c.originalMessageId.value))
+        ) match
+          case Nil      => Nil // a cursor for an entry that has since gone
+          case _ :: rest => rest
+      }
+      // Read one past the page to decide whether a cursor is warranted, so the
+      // last page reports None rather than a cursor onto nothing.
+      val page = after.take(limit)
+      val more = after.sizeIs > limit
+      DeadLetterPage(page, Option.when(more && page.nonEmpty)(cursorOf(page.last)))
+    }
 
   def find(subscriptionId: SubscriptionId, messageId: MessageId): Future[Option[DeadLetterEntry]] =
     Future(entries.get().get((subscriptionId, messageId)))
 
-  def markRedriven(subscriptionId: SubscriptionId, messageId: MessageId, at: Instant): Future[Unit] =
+  def claimForRedrive(
+      subscriptionId: SubscriptionId,
+      messageId: MessageId,
+      at: Instant,
+      force: Boolean
+  ): Future[Boolean] =
+    Future {
+      val key = (subscriptionId, messageId)
+      // getAndUpdate + recheck keeps the decision and the write in one atomic
+      // step, matching the conditional UPDATE the JDBC implementation issues.
+      val before = entries.getAndUpdate { m =>
+        m.get(key) match
+          case Some(e) if force || e.redrivenAt.isEmpty => m.updated(key, e.copy(redrivenAt = Some(at)))
+          case _                                        => m
+      }
+      before.get(key).exists(e => force || e.redrivenAt.isEmpty)
+    }
+
+  def releaseClaim(subscriptionId: SubscriptionId, messageId: MessageId): Future[Unit] =
     Future(entries.updateAndGet { m =>
-      m.get((subscriptionId, messageId)) match
-        case Some(e) => m.updated((subscriptionId, messageId), e.copy(redrivenAt = Some(at)))
-        case None    => m
+      val key = (subscriptionId, messageId)
+      m.get(key).fold(m)(e => m.updated(key, e.copy(redrivenAt = None)))
     }).map(_ => ())
 
 object InMemoryDeadLetterRepository:
@@ -116,16 +181,33 @@ final class JdbcDeadLetterRepository(dbConfig: DbConfig)(using ExecutionContext)
       }
     }.map(_ => ())
 
-  def listFor(subscriptionId: SubscriptionId): Future[List[DeadLetterEntry]] =
+  def listFor(subscriptionId: SubscriptionId, limit: Int, cursor: Option[DeadLetterCursor]): Future[DeadLetterPage] =
     Future {
       blocking {
         withConnection { conn =>
+          // Row-value comparison is the keyset predicate: strictly "after" the
+          // cursor in (time, id) descending order, which the
+          // subscription_dead_letters_sub_idx index already orders by.
+          val keyset =
+            if cursor.isDefined then " AND (dead_lettered_at, original_message_id) < (?, ?)" else ""
           val ps = conn.prepareStatement(
-            s"SELECT $Columns FROM subscription_dead_letters WHERE subscription_id = ? ORDER BY dead_lettered_at DESC"
+            s"""SELECT $Columns FROM subscription_dead_letters
+               | WHERE subscription_id = ?$keyset
+               | ORDER BY dead_lettered_at DESC, original_message_id DESC
+               | LIMIT ?""".stripMargin
           )
           ps.setString(1, subscriptionId.value)
-          val rs = ps.executeQuery()
-          Iterator.continually(rs).takeWhile(_.next()).flatMap(readEntry).toList
+          val limitIndex = cursor.fold(2) { c =>
+            ps.setTimestamp(2, Timestamp.from(c.deadLetteredAt))
+            ps.setString(3, c.originalMessageId.value)
+            4
+          }
+          // Fetch one extra row to tell "more remain" from "exactly a full page".
+          ps.setInt(limitIndex, limit + 1)
+          val rs      = ps.executeQuery()
+          val fetched = Iterator.continually(rs).takeWhile(_.next()).flatMap(readEntry).toList
+          val page    = fetched.take(limit)
+          DeadLetterPage(page, Option.when(fetched.sizeIs > limit && page.nonEmpty)(cursorOf(page.last)))
         }
       }
     }
@@ -145,16 +227,41 @@ final class JdbcDeadLetterRepository(dbConfig: DbConfig)(using ExecutionContext)
       }
     }
 
-  def markRedriven(subscriptionId: SubscriptionId, messageId: MessageId, at: Instant): Future[Unit] =
+  /** The conditional UPDATE *is* the claim: the affected-row count decides the
+    * winner, so two concurrent redrives of one entry cannot both proceed. Row
+    * locking makes this atomic without an explicit transaction.
+    */
+  def claimForRedrive(
+      subscriptionId: SubscriptionId,
+      messageId: MessageId,
+      at: Instant,
+      force: Boolean
+  ): Future[Boolean] =
     Future {
       blocking {
         withConnection { conn =>
+          val guard = if force then "" else " AND redriven_at IS NULL"
           val ps = conn.prepareStatement(
-            "UPDATE subscription_dead_letters SET redriven_at = ? WHERE subscription_id = ? AND original_message_id = ?"
+            s"""UPDATE subscription_dead_letters SET redriven_at = ?
+               | WHERE subscription_id = ? AND original_message_id = ?$guard""".stripMargin
           )
           ps.setTimestamp(1, Timestamp.from(at))
           ps.setString(2, subscriptionId.value)
           ps.setString(3, messageId.value)
+          ps.executeUpdate() == 1
+        }
+      }
+    }
+
+  def releaseClaim(subscriptionId: SubscriptionId, messageId: MessageId): Future[Unit] =
+    Future {
+      blocking {
+        withConnection { conn =>
+          val ps = conn.prepareStatement(
+            "UPDATE subscription_dead_letters SET redriven_at = NULL WHERE subscription_id = ? AND original_message_id = ?"
+          )
+          ps.setString(1, subscriptionId.value)
+          ps.setString(2, messageId.value)
           ps.executeUpdate()
         }
       }
@@ -189,3 +296,6 @@ final class JdbcDeadLetterRepository(dbConfig: DbConfig)(using ExecutionContext)
     val conn = DriverManager.getConnection(dbConfig.jdbcUrl, dbConfig.user, dbConfig.password)
     try f(conn)
     finally conn.close()
+
+private[delivery] def cursorOf(entry: DeadLetterEntry): DeadLetterCursor =
+  DeadLetterCursor(entry.deadLetteredAt, entry.originalMessageId)
