@@ -9,6 +9,9 @@ import me.cference.hermesmq.persistence.PostgresIT
 import me.cference.hermesmq.persistence.SchemaMigrator
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.ScalaFutures
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import org.testcontainers.DockerClientFactory
@@ -34,6 +37,13 @@ final class DeadLetterRepositoryIntegrationSpec
     with BeforeAndAfterAll:
 
   private given ExecutionContext = ExecutionContext.global
+
+  // ScalaFutures defaults to a 150ms patience, which is fine for in-memory work
+  // and far too tight for the FIRST JDBC round-trip to a fresh container --
+  // connection establishment plus JIT warmup regularly exceeds it. Observed as a
+  // CI flake on the suite's first test while every later test passed.
+  override implicit val patienceConfig: PatienceConfig =
+    PatienceConfig(timeout = Span(15, Seconds), interval = Span(100, Millis))
 
   private val dockerAvailable =
     try DockerClientFactory.instance().isDockerAvailable
