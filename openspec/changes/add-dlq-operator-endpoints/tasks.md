@@ -50,7 +50,7 @@ production code, and lands the tests and documentation its own work calls for.
 
 - [x] 7.1 Add an end-to-end test: publish, exhaust attempts to dead-letter, browse the result, redrive it, and assert it is delivered again to a live subscription on the origin topic
 - [x] 7.2 Verify the full gate is green — `sbt clean "scalafixAll --check" test` — with no new `-Werror` warnings or `DisableSyntax` violations
-- [ ] 7.3 NOT RUN LOCALLY: Docker was unavailable on the dev machine, so the PostgreSQL integration suite (`sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec *SchemaMigrationIntegrationSpec"`) could not verify the new table against a real database. Must be run before merge
+- [x] 7.3 Closed differently than written: Docker was unavailable locally, so instead the suites now run in CI (`Integration (PostgreSQL)`, added in #116) and this change adds `DeadLetterRepositoryIntegrationSpec` plus a `subscription_dead_letters` assertion in `SchemaMigrationIntegrationSpec`, so the DDL and every JDBC statement are verified against a real PostgreSQL on every PR rather than by hand
 - [x] 7.4 Update the README capability table with a dead-letter operations row and confirm every internal anchor added in this change resolves
 
 ## Workflow follow-up
