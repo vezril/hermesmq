@@ -78,8 +78,17 @@ final class ObservabilityIntegrationSpec extends AnyWordSpec with Matchers with 
       def ack(i: Int) = AckId.from(s"ack-$i").toOption.get
       val t0 = Instant.parse("2026-07-07T12:00:00Z")
 
+      // A Publish replies `Published(messageId, deduplicated)` -- it has since
+      // idempotent-publish landed -- while every other topic command replies
+      // `Accepted`. This suite asserted `Accepted` for both and so had been
+      // failing silently: it is tagged PostgresIT and was excluded from CI until
+      // the Integration (PostgreSQL) job started running it.
       def topicSubmit(e: ActorRef[TopicEntityCommand], c: TopicCommand): Unit =
-        e ! TopicEntityCommand.Submit(c, reply.ref); val _ = reply.expectMessage(20.seconds, CommandReply.Accepted)
+        e ! TopicEntityCommand.Submit(c, reply.ref)
+        val expected = c match
+          case TopicCommand.Publish(m) => CommandReply.Published(m.id, deduplicated = false)
+          case _                       => CommandReply.Accepted
+        val _ = reply.expectMessage(20.seconds, expected)
       def subSubmit(e: ActorRef[SubscriptionEntityCommand], c: SubscriptionCommand): Unit =
         e ! SubscriptionEntityCommand.Submit(c, reply.ref); val _ = reply.expectMessage(20.seconds, CommandReply.Accepted)
 
