@@ -53,6 +53,7 @@ and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 | Request tracing (correlation id at the boundary + carried on the bus) | ✅ Done |
 | Polyglot clients: Python 3 and JavaScript (ESM) alongside Scala | ✅ Done |
 | Dead-letter operations: non-destructive browse + idempotent redrive | ✅ Done |
+| Effectively-once consumption: stable `ackId` dedup contract, specified and tested | ✅ Done |
 
 ## Roadmap
 
@@ -561,8 +562,11 @@ curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...
 curl localhost:8080/metrics            # hermesmq_subscription_backlog{subscription="s1"} 2 ...
 ```
 
-The stats projections use exactly-once processing so counters are never
-double-counted on replay. Counts are maintained **forward**: because journal
+The stats projections use Pekko Projection's **exactly-once** mode so counters
+are never double-counted on replay — the counter update and the offset commit
+land in one transaction. That is a different claim from message delivery, and
+achievable for the same reason delivery's isn't: here the broker owns both sides
+of the transaction. See [Delivery semantics](#delivery-semantics). Counts are maintained **forward**: because journal
 retention purges old events, these read models cannot be rebuilt from a
 from-zero replay once events are deleted — the projections run continuously from
 first start, so live counts stay accurate.
