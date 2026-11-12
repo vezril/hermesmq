@@ -21,10 +21,12 @@ import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.config.ServiceConfig
 import me.cference.hermesmq.config.StreamConfig
 import me.cference.hermesmq.config.TtlConfig
+import me.cference.hermesmq.delivery.DeadLetterIndexProjection
 import me.cference.hermesmq.delivery.DeadLetterProjection
 import me.cference.hermesmq.delivery.DeliveryHandler
 import me.cference.hermesmq.delivery.DeliveryProjection
 import me.cference.hermesmq.delivery.ExpiringMessageProjection
+import me.cference.hermesmq.delivery.JdbcDeadLetterRepository
 import me.cference.hermesmq.delivery.JdbcExpiringMessageRepository
 import me.cference.hermesmq.delivery.JdbcOutstandingLeaseRepository
 import me.cference.hermesmq.delivery.JdbcTopicSubscriptionsRepository
@@ -36,6 +38,7 @@ import me.cference.hermesmq.grpc.GrpcServer
 import me.cference.hermesmq.grpc.PubSubPowerApi
 import me.cference.hermesmq.grpc.TopicAdminPowerApi
 import me.cference.hermesmq.http.Auth
+import me.cference.hermesmq.http.DeadLetterRoutes
 import me.cference.hermesmq.http.HttpServer
 import me.cference.hermesmq.http.PubSubRoutes
 import me.cference.hermesmq.http.Readiness
@@ -120,6 +123,7 @@ object Main:
           // Durable, cluster-shared read models.
           val subscriptionsRepo = JdbcTopicSubscriptionsRepository(dbConfig)
           val leaseRepo         = JdbcOutstandingLeaseRepository(dbConfig)
+          val deadLetterRepo    = JdbcDeadLetterRepository(dbConfig)
           val subStatsRepo      = JdbcSubscriptionStatsRepository(dbConfig)
           val topicStatsRepo    = JdbcTopicStatsRepository(dbConfig)
           val expiringRepo      = JdbcExpiringMessageRepository(dbConfig)
@@ -152,8 +156,19 @@ object Main:
           ShardedDaemonProcess(ctx.system).init(
             name = "dead-letter-projection",
             numberOfInstances = 1,
+            behaviorFactory = (_: Int) =>
+              ProjectionBehavior(
+                DeadLetterProjection(ctx.system, dbConfig, topicService, subscriptionsRepo, redeliveryConfig.deadLetterTopic)
+              ),
+            stopMessage = ProjectionBehavior.Stop
+          )
+          // Separate from the routing projection above: recording the evidence
+          // must not be blocked by a persistent republish failure.
+          ShardedDaemonProcess(ctx.system).init(
+            name = "dead-letter-index-projection",
+            numberOfInstances = 1,
             behaviorFactory =
-              (_: Int) => ProjectionBehavior(DeadLetterProjection(ctx.system, dbConfig, topicService, redeliveryConfig.deadLetterTopic)),
+              (_: Int) => ProjectionBehavior(DeadLetterIndexProjection(ctx.system, dbConfig, deadLetterRepo, subscriptionsRepo)),
             stopMessage = ProjectionBehavior.Stop
           )
 
@@ -215,6 +230,9 @@ object Main:
                 val scopedSubs   = TenantScopedSubscriptionService(subscriptionService, tenantScope, principal.tenant)
                 TopicAdminRoutes(scopedTopics, principal).routes ~
                   PubSubRoutes(scopedTopics, scopedSubs, ttlConfig, consumerRegistry, dedupCounter, producerRegistry).routes ~
+                  // Redrive republishes with the internal (already-qualified)
+                  // origin topic, so it takes the unscoped topic service.
+                  DeadLetterRoutes(deadLetterRepo, scopedSubs, topicService, subscriptionsRepo, principal, tenantScope).routes ~
                   observability.listings(principal, tenantScope)
               }
 

@@ -97,7 +97,8 @@ jobs:
           sbt -v -Dit=true "testOnly
           *PostgresPersistenceIntegrationSpec
           *SchemaMigrationIntegrationSpec
-          *ObservabilityIntegrationSpec"
+          *ObservabilityIntegrationSpec
+          *DeadLetterRepositoryIntegrationSpec"
 
   # Auto-publish a snapshot on every push to `development`. This is a SEPARATE,
   # non-required job: registry hiccups (a Docker Hub 504, an already-published

@@ -19,6 +19,16 @@ trait TopicSubscriptionsRepository:
   def remove(topicId: TopicId, subscriptionId: SubscriptionId): Future[Unit]
   def subscriptionsFor(topicId: TopicId): Future[Set[SubscriptionId]]
 
+  /** The reverse lookup: which topic a subscription belongs to.
+    *
+    * Dead-letter routing records the origin topic on the envelope, and redrive
+    * republishes to it; this read model is the only durable, cluster-shared
+    * place that mapping lives. `None` for a subscription the index has not seen
+    * (or that has been removed) -- callers treat it as "unresolved" rather than
+    * an error, since losing a dead-letter is worse than losing its origin topic.
+    */
+  def topicFor(subscriptionId: SubscriptionId): Future[Option[TopicId]]
+
 /** In-memory implementation for tests (and single-node fallbacks). */
 final class InMemoryTopicSubscriptionsRepository(using ExecutionContext) extends TopicSubscriptionsRepository:
   private val byTopic = new AtomicReference(Map.empty[TopicId, Set[SubscriptionId]])
@@ -36,6 +46,9 @@ final class InMemoryTopicSubscriptionsRepository(using ExecutionContext) extends
 
   def subscriptionsFor(topicId: TopicId): Future[Set[SubscriptionId]] =
     Future(byTopic.get().getOrElse(topicId, Set.empty))
+
+  def topicFor(subscriptionId: SubscriptionId): Future[Option[TopicId]] =
+    Future(byTopic.get().collectFirst { case (topic, subs) if subs.contains(subscriptionId) => topic })
 
 object InMemoryTopicSubscriptionsRepository:
   def apply()(using ExecutionContext): InMemoryTopicSubscriptionsRepository = new InMemoryTopicSubscriptionsRepository
@@ -80,6 +93,18 @@ final class JdbcTopicSubscriptionsRepository(dbConfig: DbConfig)(using Execution
           ps.setString(1, topicId.value)
           val rs = ps.executeQuery()
           Iterator.continually(rs).takeWhile(_.next()).flatMap(r => SubscriptionId.from(r.getString(1)).toOption).toSet
+        }
+      }
+    }
+
+  def topicFor(subscriptionId: SubscriptionId): Future[Option[TopicId]] =
+    Future {
+      blocking {
+        withConnection { conn =>
+          val ps = conn.prepareStatement("SELECT topic_id FROM topic_subscriptions WHERE subscription_id = ?")
+          ps.setString(1, subscriptionId.value)
+          val rs = ps.executeQuery()
+          Iterator.continually(rs).takeWhile(_.next()).flatMap(r => TopicId.from(r.getString(1)).toOption).nextOption()
         }
       }
     }
