@@ -28,7 +28,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up JDK 21 (Temurin) with sbt cache
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
