@@ -78,6 +78,7 @@ listed here so the guarantees are legible without reading the whole document:
 | sbt  | 1.10.7 | Pinned in [`project/build.properties`](project/build.properties); the launcher fetches it automatically. |
 | PostgreSQL | 16 | Required to **run** the service (see [Persistence](#persistence)); not needed to build or run the tests. |
 | Docker | any | Only for building the container image and the PostgreSQL integration test. |
+| Node | 22+ | Only for the JS client and the `openspec` planning CLI. Pinned in [`.mise.toml`](.mise.toml); `openspec` crashes on Node 18. |
 
 Scala itself (3.3 LTS) is resolved by sbt — no separate install needed.
 
