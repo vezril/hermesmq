@@ -54,6 +54,7 @@ and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 | Polyglot clients: Python 3 and JavaScript (ESM) alongside Scala | ✅ Done |
 | Dead-letter operations: non-destructive browse + idempotent redrive | ✅ Done |
 | Effectively-once consumption: stable `ackId` dedup contract, specified and tested | ✅ Done |
+| Back-delivery: opt-in `startFrom: earliest` replays a topic's retained history | ✅ Done |
 
 ## Roadmap
 
@@ -63,7 +64,7 @@ listed here so the guarantees are legible without reading the whole document:
 | Not implemented | Why / what it would take |
 |-----------------|--------------------------|
 | **Exactly-once delivery** — *not planned, and not possible* | Not a gap to be filled. A broker cannot make a consumer's side effects atomic with its ack, so it cannot know whether redelivery would duplicate work. HermesMQ offers at-least-once delivery with a stable `ackId` to deduplicate on — see [Delivery semantics](#delivery-semantics). |
-| **Back-delivery to new subscriptions** | A subscription created *after* a message was published never receives it — delivery starts from the subscription's creation point, and journal retention means old events may already be purged. |
+| **gRPC parity for `startFrom`** | Back-delivery ([`startFrom: earliest`](#back-delivery-to-a-new-subscription)) is REST-only: `CreateSubscriptionRequest` comes from the pinned Lexicon artifact, so the field needs a Lexicon change and a pin bump. gRPC-created subscriptions behave as `now`. |
 | **Rebuilding the topic→subscriptions index from the journal on restart** | The cluster-shared index is a durable read model maintained **forward** by a projection; it is not reconstructable from a from-zero replay once retention has purged events. |
 | **Per-topic / per-subscription TTL, and dead-letter-on-expiry** | TTL today is a global default plus a per-publish override, and expiry drops silently rather than leaving an audit trail. See [Message TTL](#message-ttl). |
 | **Cluster-wide aggregation of the consumer/producer gauges** | `hermesmq_subscription_consumers` and `hermesmq_topic_producers` are in-memory and **per-node** — exact on a single replica, partial across a cluster. The metric names and meanings would not change. |
@@ -367,7 +368,7 @@ and survives restarts.
 | Method & path                          | Body                                   | Result |
 |-----------------------------------------|----------------------------------------|--------|
 | `POST /v1/topics/{id}/messages`         | `{"payload":"…","attributes":{…}}`     | `202` `{messageId}` · `404` · `400` |
-| `POST /v1/subscriptions`                | `{"subscriptionId":"s1","topicId":"orders"}` | `201` · `409` |
+| `POST /v1/subscriptions`                | `{"subscriptionId":"s1","topicId":"orders","startFrom":"now"\|"earliest"}` | `201` · `409` · `400` bad `startFrom` |
 | `DELETE /v1/subscriptions/{id}`         | —                                      | `204` · `404` |
 | `POST /v1/subscriptions/{id}/pull`      | `{"max":10}`                           | `200` `{messages:[{ackId,payload,attributes,publishTime}]}` · `404` |
 | `POST /v1/subscriptions/{id}/ack`       | `{"ackIds":["…"]}`                     | `200` `{acknowledged,unknown}` |
@@ -404,6 +405,45 @@ republished to `HERMESMQ_DEAD_LETTER_TOPIC` — carrying `x-dead-letter-subscrip
 warning) if no topic is configured. Consumers can extend a lease with
 `modifyAckDeadline`, or nack for immediate redelivery by sending
 `ackDeadlineSeconds: 0`.
+
+### Back-delivery to a new subscription
+
+By default a subscription receives only messages published **after** it was
+created — `startFrom: "now"`, which is what every subscription did before this
+option existed. Pass `"earliest"` to have the broker deliver the messages already
+in the topic's journal:
+
+```bash
+curl -X POST localhost:8080/v1/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{"subscriptionId":"s1","topicId":"orders","startFrom":"earliest"}'   # 201
+```
+
+Three things to know before relying on it:
+
+- **`earliest` means earliest *still retained*.** Snapshot retention
+  (`HERMESMQ_SNAPSHOT_KEEP`) deletes journal events behind the retained
+  snapshots, so on a long-lived topic this is not "everything ever published".
+  Purged messages are simply absent — no error, no warning.
+- **It is asynchronous.** The back-delivery runs off the journal in the
+  subscription-index projection, not inside your `POST`. A client that creates an
+  `earliest` subscription and immediately pulls may get nothing yet.
+- **It happens at most once per subscription**, guarded by a durable marker
+  rather than by delivery idempotency. That distinction matters: `RecordDelivery`
+  de-duplicates only while a message is still *outstanding*, so once your
+  consumer acks a back-delivered message there is nothing left to collide with —
+  without the marker, a projection replay would hand you the whole backfill
+  again.
+
+Expired messages are skipped (a TTL that lapsed while the message sat in the
+journal is still lapsed), and a back-delivered message is otherwise
+indistinguishable from a live one: same payload, attributes, correlation id, and
+the same `(subscription, message)`-derived `ackId`.
+
+**REST only for now.** The gRPC `CreateSubscriptionRequest` comes from the pinned
+Lexicon artifact, so `start_from` needs a change in
+[the Lexicon](https://github.com/vezril/the-lexicon) and a pin bump here.
+gRPC-created subscriptions behave as `now`, unchanged.
 
 ### Delivery semantics
 

@@ -209,3 +209,34 @@ final class SubscriptionSpec extends AnyFunSuite:
     val _ = assert(Subscription.decide(deleted, RecordDelivery(ackId, message)) == Left(Rejection.SubscriptionNotFound))
     assert(Subscription.decide(deleted, Lease(10, 30.seconds, t0)) == Left(Rejection.SubscriptionNotFound))
 
+
+  // --- Start position (subscription-back-delivery) ---
+
+  test("creating a subscription without a start position defaults to Now"):
+    val events = Subscription.decide(Subscription.empty, CreateSubscription(subId, topicId)).toOption.get
+    assert(events == List(SubscriptionCreated(subId, topicId, StartPosition.Now)))
+
+  test("creating a subscription with Earliest carries that position on the event"):
+    val events =
+      Subscription.decide(Subscription.empty, CreateSubscription(subId, topicId, StartPosition.Earliest)).toOption.get
+    assert(events == List(SubscriptionCreated(subId, topicId, StartPosition.Earliest)))
+
+  test("the start position survives evolve, so recovery reflects the choice"):
+    val created = Subscription
+      .decide(Subscription.empty, CreateSubscription(subId, topicId, StartPosition.Earliest))
+      .toOption
+      .get
+      .foldLeft(Subscription.empty)(Subscription.evolve)
+    val _ = assert(created.exists)
+    assert(created.startFrom == StartPosition.Earliest)
+
+  test("re-creating an existing subscription with a different start position is still rejected"):
+    val created = Subscription
+      .decide(Subscription.empty, CreateSubscription(subId, topicId, StartPosition.Now))
+      .toOption
+      .get
+      .foldLeft(Subscription.empty)(Subscription.evolve)
+    assert(
+      Subscription.decide(created, CreateSubscription(subId, topicId, StartPosition.Earliest)) ==
+        Left(Rejection.SubscriptionAlreadyExists)
+    )
