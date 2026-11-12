@@ -9,10 +9,10 @@ import me.cference.hermesmq.persistence.PostgresIT
 import me.cference.hermesmq.persistence.SchemaMigrator
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.ScalaFutures
+import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.Millis
 import org.scalatest.time.Seconds
 import org.scalatest.time.Span
-import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.PostgreSQLContainer
