@@ -5,15 +5,15 @@ production code, and lands the tests and documentation its own work calls for.
 
 ## 1. Record the origin topic on dead-letter routing
 
-- [ ] 1.1 Add a failing `DeadLetterRouterSpec` case asserting the dead-letter envelope carries `x-original-topic` set to the origin topic, alongside the three existing `x-*` attributes; verify it fails for the right reason before touching production code
-- [ ] 1.2 Add `OriginalTopicHeader` to `DeadLetterRouter` and thread the origin topic into `deadLetterMessage`, resolving it from the subscription; verify 1.1 passes and the existing payload-byte and attribute-preservation cases still pass
-- [ ] 1.3 Write the `redelivery-timers` delta's new scenario as a test (origin topic recorded for self-contained replay) and verify `sbt "testOnly *DeadLetterRouterSpec"` is green
+- [x] 1.1 Add a failing `DeadLetterRouterSpec` case asserting the dead-letter envelope carries `x-original-topic` set to the origin topic, alongside the three existing `x-*` attributes; verify it fails for the right reason before touching production code
+- [x] 1.2 Add `OriginalTopicHeader` to `DeadLetterRouter` and thread the origin topic into `deadLetterMessage`, resolving it from the subscription; verify 1.1 passes and the existing payload-byte and attribute-preservation cases still pass
+- [x] 1.3 Write the `redelivery-timers` delta's new scenario as a test (origin topic recorded for self-contained replay) and verify `sbt "testOnly *DeadLetterRouterSpec"` is green
 
 ## 2. Dead-letter read model: schema and repository
 
-- [ ] 2.1 Add `subscription_dead_letters` (subscription id, original message id, origin topic, payload, attributes, attempt count, dead-lettered-at, redriven-at) to `server/src/main/resources/schema/postgres.sql` with `IF NOT EXISTS`; verify `SchemaMigrationIntegrationSpec` still passes against a fresh database via `sbt -Dit=true "testOnly *SchemaMigrationIntegrationSpec"`
-- [ ] 2.2 Write a failing repository spec covering record, list-by-subscription, lookup-by-id, mark-redriven, and the `ON CONFLICT DO NOTHING` re-record case; model it on the existing `TopicSubscriptionsRepository` tests
-- [ ] 2.3 Implement `DeadLetterRepository` with an in-memory and a JDBC implementation, mirroring the `TopicSubscriptionsRepository` split so unit tests need no database; verify 2.2 passes
+- [x] 2.1 Add `subscription_dead_letters` (subscription id, original message id, origin topic, payload, attributes, attempt count, dead-lettered-at, redriven-at) to `server/src/main/resources/schema/postgres.sql` with `IF NOT EXISTS`; verify `SchemaMigrationIntegrationSpec` still passes against a fresh database via `sbt -Dit=true "testOnly *SchemaMigrationIntegrationSpec"`
+- [x] 2.2 Write a failing repository spec covering record, list-by-subscription, lookup-by-id, mark-redriven, and the `ON CONFLICT DO NOTHING` re-record case; model it on the existing `TopicSubscriptionsRepository` tests
+- [x] 2.3 Implement `DeadLetterRepository` with an in-memory and a JDBC implementation, mirroring the `TopicSubscriptionsRepository` split so unit tests need no database; verify 2.2 passes
 
 ## 3. Dead-letter read model: projection
 

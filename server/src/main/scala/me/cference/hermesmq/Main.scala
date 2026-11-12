@@ -152,8 +152,10 @@ object Main:
           ShardedDaemonProcess(ctx.system).init(
             name = "dead-letter-projection",
             numberOfInstances = 1,
-            behaviorFactory =
-              (_: Int) => ProjectionBehavior(DeadLetterProjection(ctx.system, dbConfig, topicService, redeliveryConfig.deadLetterTopic)),
+            behaviorFactory = (_: Int) =>
+              ProjectionBehavior(
+                DeadLetterProjection(ctx.system, dbConfig, topicService, subscriptionsRepo, redeliveryConfig.deadLetterTopic)
+              ),
             stopMessage = ProjectionBehavior.Stop
           )
 

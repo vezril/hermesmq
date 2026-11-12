@@ -125,3 +125,29 @@ CREATE TABLE IF NOT EXISTS public.expiring_messages (
     PRIMARY KEY (subscription_id, ack_id)
 );
 CREATE INDEX IF NOT EXISTS expiring_messages_expire_idx ON public.expiring_messages (expire_time);
+
+-- Durable, cluster-shared dead-letter read model (dead-letter-operations),
+-- maintained forward by a projection over subscription `MessageDeadLettered`
+-- events. Serves the operator browse endpoint and supplies redrive with the
+-- payload and origin topic.
+--
+-- The payload is stored here rather than only referenced: journal retention
+-- eventually purges the originating event, and redrive must still be able to
+-- republish. Dead-letters are the rare tail, so the duplication is bounded.
+--
+-- `origin_topic` is nullable: a subscription whose topic the index had not yet
+-- projected still records its dead-letter, and the redrive path falls back to
+-- resolving the topic from the subscription.
+CREATE TABLE IF NOT EXISTS public.subscription_dead_letters (
+    subscription_id     VARCHAR(255) NOT NULL,
+    original_message_id VARCHAR(255) NOT NULL,
+    origin_topic        VARCHAR(255),
+    payload             BYTEA        NOT NULL,
+    attributes          TEXT         NOT NULL,
+    delivery_attempts   INT          NOT NULL,
+    dead_lettered_at    TIMESTAMPTZ  NOT NULL,
+    redriven_at         TIMESTAMPTZ,
+    PRIMARY KEY (subscription_id, original_message_id)
+);
+CREATE INDEX IF NOT EXISTS subscription_dead_letters_sub_idx
+    ON public.subscription_dead_letters (subscription_id, dead_lettered_at DESC);
