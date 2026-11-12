@@ -1,0 +1,98 @@
+name: Sync main into development
+
+# Releasing merges `development` -> `main`, which creates a merge commit that
+# exists only on `main`. Nothing merges it back, so the branches drift apart by
+# one commit per release and "what is unreleased?" stops being a clean question.
+#
+# GitHub cannot fast-forward a pull request (only merge / squash / rebase), and
+# `main` requires a PR with `enforce_admins`, so a direct fast-forward push is
+# not available either -- and removing that gate to save a merge commit would be
+# a bad trade. Instead: after anything lands on `main`, open a back-merge PR
+# automatically, so the sync is impossible to forget rather than merely
+# remembered.
+#
+# This does NOT auto-merge. The PR runs CI and a human merges it, so the branch
+# protection on `development` still applies.
+on:
+  push:
+    branches:
+      - main
+
+# Only one sync in flight at a time; a later push supersedes an earlier run.
+concurrency:
+  group: sync-main-into-development
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  back-merge:
+    name: Open back-merge PR
+    runs-on: ubuntu-26.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BRANCH: chore/sync-main-into-development
+    steps:
+      - name: Checkout (full history, both branches)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Nothing to do when development already contains every commit on main --
+      # the common case for a push to main that came from a back-merge itself.
+      - name: Check whether development is already in sync
+        id: check
+        run: |
+          git fetch origin main development
+          behind=$(git rev-list --count origin/development..origin/main)
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          if [ "$behind" -eq 0 ]; then
+            echo "development already contains all of main; nothing to sync."
+          else
+            echo "main has $behind commit(s) development lacks."
+          fi
+
+      - name: Configure git identity
+        if: steps.check.outputs.behind != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Reset the sync branch to development and merge main into it. A conflict
+      # here is a real signal (main and development have genuinely diverged in
+      # content), so fail loudly rather than forcing a resolution.
+      - name: Build the back-merge branch
+        if: steps.check.outputs.behind != '0'
+        run: |
+          git checkout -B "$BRANCH" origin/development
+          if ! git merge origin/main -m "Merge main into development: heal the post-release divergence"; then
+            echo "::error::main and development have diverged in content; resolve this back-merge by hand."
+            exit 1
+          fi
+          git push --force-with-lease origin "$BRANCH"
+
+      # Reuse an open PR rather than stacking duplicates across releases.
+      - name: Open or update the pull request
+        if: steps.check.outputs.behind != '0'
+        run: |
+          existing=$(gh pr list --head "$BRANCH" --base development --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "Updated existing PR #$existing (the branch was pushed above)."
+            exit 0
+          fi
+          {
+            echo "Opened automatically by \`.github/workflows/sync-main.yml\` after a push to \`main\`."
+            echo
+            echo "Releasing merges \`development\` into \`main\`, creating a merge commit that exists only on \`main\`. Without a back-merge the branches drift by one commit per release. This PR carries that merge commit back so the two stay comparable."
+            echo
+            echo "Expected to be a **no-op in content** -- only the merge commit. If CI shows real changes, \`main\` received a commit that never went through \`development\`, which is worth a look before merging."
+            echo
+            echo "Not auto-merged: CI runs and a human merges, so \`development\`'s branch protection still applies."
+          } > /tmp/pr-body.md
+          gh pr create \
+            --base development \
+            --head "$BRANCH" \
+            --title "Merge main into development: heal the post-release divergence" \
+            --body-file /tmp/pr-body.md

@@ -976,6 +976,26 @@ Direct pushes to `main` and `development` are disallowed by branch protection
 (see [Required GitHub settings](#required-github-settings)); all changes go
 through a reviewed, CI-checked pull request.
 
+### Back-merging after a release
+
+Merging `development` into `main` creates a merge commit that exists **only** on
+`main`. Nothing carries it back, so without intervention the branches drift apart
+by one commit per release and "what is unreleased?" stops having a clean answer.
+
+GitHub cannot fast-forward a pull request — the options are merge, squash, and
+rebase — and `main` requires a PR with `enforce_admins`, so a direct
+fast-forward push is not available either. Removing that gate to avoid a merge
+commit would trade a real safeguard for a cosmetic one.
+
+Instead, [`sync-main.yml`](.github/workflows/sync-main.yml) opens a back-merge PR
+automatically on every push to `main`, so the sync is impossible to forget rather
+than merely remembered. It is a no-op when `development` already contains
+everything on `main`, reuses its open PR instead of stacking duplicates, and
+**does not auto-merge** — CI runs and a human merges, so `development`'s branch
+protection still applies. A merge conflict there is a real signal (`main`
+received a commit that never went through `development`) and fails the run rather
+than being force-resolved.
+
 ## Versioning
 
 Versions follow [Semantic Versioning 2.0.0](https://semver.org/) and are derived
