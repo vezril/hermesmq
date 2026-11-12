@@ -14,7 +14,7 @@ publish is acknowledged to the producer **only once its event is durably
 written**, and a restart replays the journal so accepted messages survive crashes
 and unacknowledged messages resume exactly where they left off. It runs as a
 single node or as a Pekko cluster over a shared journal, and is honest about its
-guarantees either way — see [Delivery guarantees](#delivery-guarantee-and-current-limits)
+guarantees either way — see [Delivery guarantees](#delivery-semantics)
 and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 
 > **Status:** feature-complete for its intended scope — every capability below is
@@ -61,7 +61,7 @@ listed here so the guarantees are legible without reading the whole document:
 
 | Not implemented | Why / what it would take |
 |-----------------|--------------------------|
-| **Exactly-once delivery** | Delivery is at-least-once. Consumers must be idempotent. Exactly-once would need consumer-side transactional ack coupling, which the current ack protocol does not model. |
+| **Exactly-once delivery** — *not planned, and not possible* | Not a gap to be filled. A broker cannot make a consumer's side effects atomic with its ack, so it cannot know whether redelivery would duplicate work. HermesMQ offers at-least-once delivery with a stable `ackId` to deduplicate on — see [Delivery semantics](#delivery-semantics). |
 | **Back-delivery to new subscriptions** | A subscription created *after* a message was published never receives it — delivery starts from the subscription's creation point, and journal retention means old events may already be purged. |
 | **Rebuilding the topic→subscriptions index from the journal on restart** | The cluster-shared index is a durable read model maintained **forward** by a projection; it is not reconstructable from a from-zero replay once retention has purged events. |
 | **Per-topic / per-subscription TTL, and dead-letter-on-expiry** | TTL today is a global default plus a per-publish override, and expiry drops silently rather than leaving an audit trail. See [Message TTL](#message-ttl). |
@@ -404,16 +404,54 @@ warning) if no topic is configured. Consumers can extend a lease with
 `modifyAckDeadline`, or nack for immediate redelivery by sending
 `ackDeadlineSeconds: 0`.
 
-### Delivery guarantee (and current limits)
+### Delivery semantics
 
-**At-least-once.** The `ackId` is deterministic per `(subscription, message)`, so
-a projection replay re-delivers idempotently and does not duplicate an
-outstanding message — but a consumer must still tolerate seeing a message twice.
+**At-least-once delivery, effectively-once processing.** Those are two different
+statements and the distinction is the whole contract, so it is worth being
+precise about both.
+
+**What the broker guarantees.** Every published message is delivered to every
+subscription on its topic at least once, and each delivery carries an `ackId`
+that is a pure function of `(subscription, message)`. The same message
+redelivered to the same subscription — after an ack-deadline lapse, after a nack,
+or after a projection replay — carries the **identical** `ackId` every time. The
+broker never mints a fresh key per attempt.
+
+**What the broker does not guarantee: exactly-once.** It is not a missing
+feature; it is not achievable by a broker of this shape. Consider a consumer that
+writes to its own database and then crashes before its ack arrives. The broker
+cannot observe that the write happened, so it must redeliver — and if it instead
+assumed the work was done, it would lose messages. No protocol the broker
+controls resolves this, because the consumer's side effects are not in the
+broker's transaction. Any system claiming exactly-once is either doing
+consumer-side deduplication under a friendlier name, or owns the consumer's
+storage (as Kafka does within its own log).
+
+**So: deduplicate on the `ackId`.** That is what makes at-least-once usable:
+
+```scala
+// Consumer side. The processed set is yours; its retention horizon is the
+// redelivery window you care about, not forever.
+val msgs = client.pull(subscriptionId, max = 10).futureValue
+msgs.foreach { m =>
+  if !alreadyProcessed(m.ackId) then
+    handle(m)                 // your side effect
+    markProcessed(m.ackId)    // in the SAME transaction as the side effect, ideally
+}
+client.ack(subscriptionId, msgs.map(_.ackId))
+```
+
+Put `markProcessed` in the same transaction as your side effect and repeats cost
+nothing. End to end, pair it with `idempotencyKey` on
+[publish](#idempotent-publish) so a producer retry does not create a second
+message in the first place: dedup at the producer boundary, dedup at the consumer
+boundary, at-least-once in between.
+
 REST payloads are treated as UTF-8 text.
 
-The guarantees HermesMQ does **not** offer — exactly-once, back-delivery to
-subscriptions created after a publish, and from-zero reconstruction of the
-subscription index — are listed with their rationale in the [Roadmap](#roadmap).
+Two guarantees HermesMQ genuinely does not offer — back-delivery to subscriptions
+created after a publish, and from-zero reconstruction of the subscription index —
+are in the [Roadmap](#roadmap) with their rationale.
 
 ## gRPC API
 
