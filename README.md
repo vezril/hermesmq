@@ -107,9 +107,23 @@ behaviour, tracing at both the boundary and on the bus, and real-socket
 boot/shutdown (`HttpServerSpec`) plus config parsing (`ServiceConfigSpec`). Actor
 systems are shut down after each suite, so no dispatcher threads are left running.
 
-Unit tests run against an in-memory journal and need **no database**; the
-PostgreSQL integration tests are opt-in (see [Persistence](#persistence)). The
-Python and JavaScript clients have their own suites — see
+Unit tests run against an in-memory journal and need **no database**. The
+PostgreSQL integration suites are tagged `PostgresIT` and excluded from the
+default run; they provision their own database with Testcontainers, so they need
+only Docker:
+
+```bash
+sbt -Dit=true test        # the whole suite, including PostgresIT
+sbt -Dit=true "testOnly *PostgresPersistenceIntegrationSpec *SchemaMigrationIntegrationSpec *ObservabilityIntegrationSpec"
+```
+
+**CI runs them** on every pull request in the `Integration (PostgreSQL)` job, so
+the schema DDL and the JDBC repositories are exercised against a real database
+rather than only by hand. Note that the suites **self-skip when Docker is
+unavailable** — that is why the CI job asserts `docker info` first, so a runner
+without Docker fails loudly instead of passing green having tested nothing.
+
+The Python and JavaScript clients have their own suites — see
 [`clients/README.md`](clients/README.md).
 
 ## Static analysis
