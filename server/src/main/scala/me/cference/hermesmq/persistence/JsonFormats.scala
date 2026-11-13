@@ -6,6 +6,7 @@ import spray.json.*
 import java.time.Instant
 import java.util.Base64
 import scala.concurrent.duration.*
+import scala.concurrent.duration.FiniteDuration
 
 /** spray-json formats for the domain events and their value types. Used by
   * [[DomainEventSerializer]] to journal events as explicit JSON.
@@ -39,6 +40,16 @@ object JsonFormats extends DefaultJsonProtocol:
       case JsNumber(n) =>
         AckDeadline.from(Duration.fromNanos(n.toLong)).fold(e => deserializationError(e.message), identity)
       case other => deserializationError(s"expected number, got $other")
+
+  /** TTLs are stored as nanoseconds, matching [[AckDeadline]]. Absent or
+    * non-positive reads as `None`, so every event journaled before TTL fields
+    * existed decodes as "no TTL" rather than failing recovery.
+    */
+  private def writeTtl(ttl: Option[FiniteDuration]): Option[(String, JsValue)] =
+    ttl.map(d => "ttlNanos" -> JsNumber(d.toNanos))
+
+  private def readTtl(o: JsObject): Option[FiniteDuration] =
+    o.fields.get("ttlNanos").collect { case JsNumber(n) if n.toLong > 0 => Duration.fromNanos(n.toLong) }
 
   given RootJsonFormat[Message] with
     def write(m: Message): JsValue =
@@ -78,18 +89,26 @@ object JsonFormats extends DefaultJsonProtocol:
 
   given RootJsonFormat[TopicEvent] with
     def write(e: TopicEvent): JsValue = e match
-      case TopicEvent.TopicCreated(topicId, labels) =>
-        JsObject("type" -> JsString("TopicCreated"), "topicId" -> topicId.toJson, "labels" -> labels.toJson)
+      case TopicEvent.TopicCreated(topicId, labels, ttl) =>
+        JsObject(
+          Map("type" -> JsString("TopicCreated"), "topicId" -> topicId.toJson, "labels" -> labels.toJson)
+            ++ writeTtl(ttl)
+        )
       case TopicEvent.MessagePublished(message) =>
         JsObject("type" -> JsString("MessagePublished"), "message" -> message.toJson)
       case TopicEvent.TopicDeleted(topicId) =>
         JsObject("type" -> JsString("TopicDeleted"), "topicId" -> topicId.toJson)
       case TopicEvent.TopicLabelsUpdated(topicId, labels) =>
         JsObject("type" -> JsString("TopicLabelsUpdated"), "topicId" -> topicId.toJson, "labels" -> labels.toJson)
+      case TopicEvent.TopicTtlUpdated(topicId, ttl) =>
+        JsObject(Map("type" -> JsString("TopicTtlUpdated"), "topicId" -> topicId.toJson) ++ writeTtl(ttl))
     def read(json: JsValue): TopicEvent =
       val o = json.asJsObject
       o.fields("type").convertTo[String] match
-        case "TopicCreated"       => TopicEvent.TopicCreated(o.fields("topicId").convertTo[TopicId], readLabels(o))
+        case "TopicCreated" =>
+          TopicEvent.TopicCreated(o.fields("topicId").convertTo[TopicId], readLabels(o), readTtl(o))
+        case "TopicTtlUpdated" =>
+          TopicEvent.TopicTtlUpdated(o.fields("topicId").convertTo[TopicId], readTtl(o))
         case "MessagePublished"   => TopicEvent.MessagePublished(o.fields("message").convertTo[Message])
         case "TopicDeleted"       => TopicEvent.TopicDeleted(o.fields("topicId").convertTo[TopicId])
         case "TopicLabelsUpdated" => TopicEvent.TopicLabelsUpdated(o.fields("topicId").convertTo[TopicId], readLabels(o))
@@ -97,13 +116,18 @@ object JsonFormats extends DefaultJsonProtocol:
 
   given RootJsonFormat[SubscriptionEvent] with
     def write(e: SubscriptionEvent): JsValue = e match
-      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom) =>
+      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom, ttl) =>
         JsObject(
           "type"           -> JsString("SubscriptionCreated"),
           "subscriptionId" -> subscriptionId.toJson,
           "topicId"        -> topicId.toJson,
           "startFrom"      -> JsString(startFrom.toString)
-        )
+        ).copy(fields = JsObject(
+          "type"           -> JsString("SubscriptionCreated"),
+          "subscriptionId" -> subscriptionId.toJson,
+          "topicId"        -> topicId.toJson,
+          "startFrom"      -> JsString(startFrom.toString)
+        ).fields ++ writeTtl(ttl))
       case SubscriptionEvent.MessageDelivered(ackId, message) =>
         JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "message" -> message.toJson)
       case SubscriptionEvent.MessageLeased(ackIds, deadline) =>
@@ -116,8 +140,11 @@ object JsonFormats extends DefaultJsonProtocol:
         JsObject("type" -> JsString("AckDeadlineExpired"), "ackId" -> ackId.toJson, "attempt" -> attempt.toJson)
       case SubscriptionEvent.MessageDeadLettered(ackId, message, attempt) =>
         JsObject("type" -> JsString("MessageDeadLettered"), "ackId" -> ackId.toJson, "message" -> message.toJson, "attempt" -> attempt.toJson)
-      case SubscriptionEvent.MessageExpired(ackId) =>
-        JsObject("type" -> JsString("MessageExpired"), "ackId" -> ackId.toJson)
+      case SubscriptionEvent.MessageExpired(ackId, message) =>
+        JsObject(
+          Map("type" -> JsString("MessageExpired"), "ackId" -> ackId.toJson)
+            ++ message.map(m => "message" -> m.toJson)
+        )
       case SubscriptionEvent.SubscriptionDeleted(subscriptionId, topicId) =>
         JsObject(
           "type"           -> JsString("SubscriptionDeleted"),
@@ -138,7 +165,8 @@ object JsonFormats extends DefaultJsonProtocol:
           SubscriptionEvent.SubscriptionCreated(
             o.fields("subscriptionId").convertTo[SubscriptionId],
             o.fields("topicId").convertTo[TopicId],
-            startFrom
+            startFrom,
+            readTtl(o)
           )
         case "MessageDelivered" =>
           SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("message").convertTo[Message])
@@ -157,7 +185,12 @@ object JsonFormats extends DefaultJsonProtocol:
             o.fields("attempt").convertTo[Int]
           )
         case "MessageExpired" =>
-          SubscriptionEvent.MessageExpired(o.fields("ackId").convertTo[AckId])
+          // Absent `message` is an event from before dead-letter-on-expiry: it can
+          // only be dropped, which is what it meant when written.
+          SubscriptionEvent.MessageExpired(
+            o.fields("ackId").convertTo[AckId],
+            o.fields.get("message").map(_.convertTo[Message])
+          )
         case "SubscriptionDeleted" =>
           SubscriptionEvent.SubscriptionDeleted(
             o.fields("subscriptionId").convertTo[SubscriptionId],
@@ -182,13 +215,20 @@ object JsonFormats extends DefaultJsonProtocol:
 
   given RootJsonFormat[Outstanding] with
     def write(o: Outstanding): JsValue =
-      JsObject("message" -> o.message.toJson, "lease" -> o.lease.toJson, "attempts" -> JsNumber(o.attempts))
+      JsObject(
+        Map("message" -> o.message.toJson, "lease" -> o.lease.toJson, "attempts" -> JsNumber(o.attempts))
+          ++ o.expireTime.map(t => "expireTime" -> JsString(t.toString))
+      )
     def read(json: JsValue): Outstanding =
       val o = json.asJsObject
       Outstanding(
         o.fields("message").convertTo[Message],
         o.fields.getOrElse("lease", JsObject("type" -> JsString("Available"))).convertTo[LeaseState],
-        o.fields.getOrElse("attempts", JsNumber(0)).convertTo[Int]
+        o.fields.getOrElse("attempts", JsNumber(0)).convertTo[Int],
+        // Absent in snapshots written before per-subscription expiry existed; the
+        // message's own expiry is the right fallback, which is what it meant then.
+        o.fields.get("expireTime").map(v => Instant.parse(v.convertTo[String]))
+          .orElse(o.fields("message").convertTo[Message].expireTime)
       )
 
   given RootJsonFormat[SeenPublish] with

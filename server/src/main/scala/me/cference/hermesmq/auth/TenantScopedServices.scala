@@ -22,7 +22,7 @@ final class TenantScopedTopicService(underlying: TopicService, scope: TenantScop
 
   def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
     val qualified = command match
-      case TopicCommand.CreateTopic(tid, labels) => TopicCommand.CreateTopic(q(tid), labels)
+      case TopicCommand.CreateTopic(tid, labels, ttl) => TopicCommand.CreateTopic(q(tid), labels, ttl)
       case other                                 => other
     underlying.submit(q(id), qualified)
 
@@ -41,8 +41,8 @@ final class TenantScopedSubscriptionService(underlying: SubscriptionService, sco
 
   def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
     val qualified = command match
-      case SubscriptionCommand.CreateSubscription(sid, tid, startFrom) =>
-        SubscriptionCommand.CreateSubscription(qSub(sid), qTopic(tid), startFrom)
+      case SubscriptionCommand.CreateSubscription(sid, tid, startFrom, ttl) =>
+        SubscriptionCommand.CreateSubscription(qSub(sid), qTopic(tid), startFrom, ttl)
       case other                                            => other
     underlying.submit(qSub(id), qualified)
 

@@ -321,7 +321,7 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
       Post("/v1/subscriptions", json("""{"subscriptionId":"s1","topicId":"orders"}""")) ~> route ~> check {
         val _ = status shouldBe StatusCodes.Created
         subs.lastCommand match
-          case Some(SubscriptionCommand.CreateSubscription(_, _, startFrom)) => startFrom shouldBe StartPosition.Now
+          case Some(SubscriptionCommand.CreateSubscription(_, _, startFrom, _)) => startFrom shouldBe StartPosition.Now
           case other                                                        => fail(s"unexpected command: $other")
       }
     }
@@ -335,7 +335,7 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
       ) ~> route ~> check {
         val _ = status shouldBe StatusCodes.Created
         subs.lastCommand match
-          case Some(SubscriptionCommand.CreateSubscription(_, _, startFrom)) => startFrom shouldBe StartPosition.Earliest
+          case Some(SubscriptionCommand.CreateSubscription(_, _, startFrom, _)) => startFrom shouldBe StartPosition.Earliest
           case other                                                        => fail(s"unexpected command: $other")
       }
     }
@@ -353,6 +353,39 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         "/v1/subscriptions",
         json("""{"subscriptionId":"s1","topicId":"orders","startFrom":"beginning"}""")
       ) ~> routes() ~> check {
+        status shouldBe StatusCodes.BadRequest
+      }
+    }
+  }
+
+  "POST /v1/subscriptions ttlSeconds" should {
+    "carry a positive TTL through to the command" in {
+      val subs  = CapturingSubsForStart()
+      val route = Route.seal(PubSubRoutes(topicStub(), subs).routes)
+      Post(
+        "/v1/subscriptions",
+        json("""{"subscriptionId":"s1","topicId":"orders","ttlSeconds":60}""")
+      ) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.Created
+        subs.lastCommand match
+          case Some(SubscriptionCommand.CreateSubscription(_, _, _, ttl)) => ttl shouldBe Some(60.seconds)
+          case other                                                     => fail(s"unexpected command: $other")
+      }
+    }
+
+    "treat zero as no TTL" in {
+      val subs  = CapturingSubsForStart()
+      val route = Route.seal(PubSubRoutes(topicStub(), subs).routes)
+      Post("/v1/subscriptions", json("""{"subscriptionId":"s1","topicId":"orders","ttlSeconds":0}""")) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.Created
+        subs.lastCommand match
+          case Some(SubscriptionCommand.CreateSubscription(_, _, _, ttl)) => ttl shouldBe None
+          case other                                                     => fail(s"unexpected command: $other")
+      }
+    }
+
+    "400 a negative TTL rather than silently treating it as off" in {
+      Post("/v1/subscriptions", json("""{"subscriptionId":"s1","topicId":"orders","ttlSeconds":-1}""")) ~> routes() ~> check {
         status shouldBe StatusCodes.BadRequest
       }
     }

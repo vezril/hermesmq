@@ -178,7 +178,14 @@ object Main:
             numberOfInstances = 1,
             behaviorFactory = (_: Int) =>
               ProjectionBehavior(
-                DeadLetterProjection(ctx.system, dbConfig, topicService, subscriptionsRepo, redeliveryConfig.deadLetterTopic)
+                DeadLetterProjection(
+                  ctx.system,
+                  dbConfig,
+                  topicService,
+                  subscriptionsRepo,
+                  redeliveryConfig.deadLetterTopic,
+                  redeliveryConfig.deadLetterOnExpiry
+                )
               ),
             stopMessage = ProjectionBehavior.Stop
           )

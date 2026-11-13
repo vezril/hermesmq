@@ -57,7 +57,7 @@ object SubscriptionIndexProjection:
     */
   def indexEvent(repository: TopicSubscriptionsRepository, event: SubscriptionEvent)(using ExecutionContext): Future[Unit] =
     event match
-      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, _) => repository.add(topicId, subscriptionId)
+      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, _, _) => repository.add(topicId, subscriptionId)
       case SubscriptionEvent.SubscriptionDeleted(subscriptionId, topicId) => repository.remove(topicId, subscriptionId)
       case _                                                              => Future.unit
 

@@ -65,6 +65,12 @@ object PrometheusText:
         subscriptions.map(s => ("subscription", s.subscriptionId.value, s.deadLetteredTotal))
       ),
       block(
+        "hermesmq_messages_expired_total",
+        "Total messages expired under their TTL per subscription (counted whether dropped or dead-lettered).",
+        "counter",
+        subscriptions.map(s => ("subscription", s.subscriptionId.value, s.expiredTotal))
+      ),
+      block(
         "hermesmq_subscription_consumers",
         "Distinct named consumers active within the configured window per subscription.",
         "gauge",

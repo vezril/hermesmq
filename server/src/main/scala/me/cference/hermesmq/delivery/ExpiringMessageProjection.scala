@@ -37,7 +37,7 @@ object ExpiringMessageProjection:
         message.expireTime.fold(Future.unit)(t => repository.add(subscriptionId, ackId, t))
       case SubscriptionEvent.MessageAcknowledged(ackId)      => repository.removed(subscriptionId, ackId)
       case SubscriptionEvent.MessageDeadLettered(ackId, _, _) => repository.removed(subscriptionId, ackId)
-      case SubscriptionEvent.MessageExpired(ackId)           => repository.removed(subscriptionId, ackId)
+      case SubscriptionEvent.MessageExpired(ackId, _)        => repository.removed(subscriptionId, ackId)
       case _                                                 => Future.unit
 
   private def subscriptionIdOf(persistenceId: String): Option[SubscriptionId] =
