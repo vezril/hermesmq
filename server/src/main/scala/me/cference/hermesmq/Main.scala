@@ -21,11 +21,13 @@ import me.cference.hermesmq.config.RetentionConfig
 import me.cference.hermesmq.config.ServiceConfig
 import me.cference.hermesmq.config.StreamConfig
 import me.cference.hermesmq.config.TtlConfig
+import me.cference.hermesmq.delivery.BackfillDeps
 import me.cference.hermesmq.delivery.DeadLetterIndexProjection
 import me.cference.hermesmq.delivery.DeadLetterProjection
 import me.cference.hermesmq.delivery.DeliveryHandler
 import me.cference.hermesmq.delivery.DeliveryProjection
 import me.cference.hermesmq.delivery.ExpiringMessageProjection
+import me.cference.hermesmq.delivery.JdbcBackfillMarkerRepository
 import me.cference.hermesmq.delivery.JdbcDeadLetterRepository
 import me.cference.hermesmq.delivery.JdbcExpiringMessageRepository
 import me.cference.hermesmq.delivery.JdbcOutstandingLeaseRepository
@@ -124,6 +126,7 @@ object Main:
           val subscriptionsRepo = JdbcTopicSubscriptionsRepository(dbConfig)
           val leaseRepo         = JdbcOutstandingLeaseRepository(dbConfig)
           val deadLetterRepo    = JdbcDeadLetterRepository(dbConfig)
+          val backfillMarkers   = JdbcBackfillMarkerRepository(dbConfig)
           val subStatsRepo      = JdbcSubscriptionStatsRepository(dbConfig)
           val topicStatsRepo    = JdbcTopicStatsRepository(dbConfig)
           val expiringRepo      = JdbcExpiringMessageRepository(dbConfig)
@@ -133,7 +136,24 @@ object Main:
           ShardedDaemonProcess(ctx.system).init(
             name = "subscription-index-projection",
             numberOfInstances = 1,
-            behaviorFactory = (_: Int) => ProjectionBehavior(SubscriptionIndexProjection(ctx.system, dbConfig, subscriptionsRepo)),
+            behaviorFactory = (_: Int) =>
+              ProjectionBehavior(
+                SubscriptionIndexProjection(
+                  ctx.system,
+                  dbConfig,
+                  subscriptionsRepo,
+                  // Back-delivery for subscriptions created with startFrom=earliest.
+                  // Reads the topic's own journal, so the horizon is whatever
+                  // snapshot retention has left.
+                  backfill = Some(
+                    BackfillDeps(
+                      history = SubscriptionIndexProjection.historyReader(ctx.system),
+                      subscriptions = subscriptionService,
+                      markers = backfillMarkers
+                    )
+                  )
+                )
+              ),
             stopMessage = ProjectionBehavior.Stop
           )
           // The delivery fan-out logs under each message's journaled correlation id;

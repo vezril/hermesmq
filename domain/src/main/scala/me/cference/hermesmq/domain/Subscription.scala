@@ -3,9 +3,24 @@ package me.cference.hermesmq.domain
 import java.time.Instant
 import scala.concurrent.duration.FiniteDuration
 
+/** Where a new subscription starts reading its topic.
+  *
+  * `Now` is the historical behaviour and the default: a subscription sees only
+  * what is published after it exists. `Earliest` asks for back-delivery of the
+  * messages already in the topic's journal -- bounded by retention, so it means
+  * "earliest still retained", not "earliest ever".
+  */
+enum StartPosition:
+  case Now
+  case Earliest
+
 /** Commands accepted by the Subscription aggregate's write side. */
 enum SubscriptionCommand:
-  case CreateSubscription(subscriptionId: SubscriptionId, topicId: TopicId)
+  case CreateSubscription(
+      subscriptionId: SubscriptionId,
+      topicId: TopicId,
+      startFrom: StartPosition = StartPosition.Now
+  )
   case RecordDelivery(ackId: AckId, message: Message)
   case Lease(max: Int, ackDeadline: FiniteDuration, now: Instant)
   case Acknowledge(ackId: AckId)
@@ -16,7 +31,15 @@ enum SubscriptionCommand:
 
 /** Events emitted by the Subscription aggregate. */
 enum SubscriptionEvent:
-  case SubscriptionCreated(subscriptionId: SubscriptionId, topicId: TopicId)
+  /** Carries the start position so the back-delivery decision is journaled, not
+    * held in the request that made it: recovery and replay must see the same
+    * choice the caller asked for.
+    */
+  case SubscriptionCreated(
+      subscriptionId: SubscriptionId,
+      topicId: TopicId,
+      startFrom: StartPosition = StartPosition.Now
+  )
   case MessageDelivered(ackId: AckId, message: Message)
   case MessageLeased(ackIds: List[AckId], deadline: Instant)
   case MessageAcknowledged(ackId: AckId)
@@ -46,7 +69,8 @@ final case class SubscriptionState(
     subscriptionId: Option[SubscriptionId],
     topicId: Option[TopicId],
     outstanding: Map[AckId, Outstanding],
-    deleted: Boolean = false
+    deleted: Boolean = false,
+    startFrom: StartPosition = StartPosition.Now
 ):
   /** The id has been used at some point, whether or not it was later deleted.
     * Mirrors TopicState: an id is never reusable, because the journal for it
@@ -76,11 +100,11 @@ object Subscription:
 
   def decide(state: SubscriptionState, command: SubscriptionCommand): Either[Rejection, List[SubscriptionEvent]] =
     command match
-      case SubscriptionCommand.CreateSubscription(subscriptionId, topicId) =>
+      case SubscriptionCommand.CreateSubscription(subscriptionId, topicId, startFrom) =>
         // `created`, not `exists`: once an id has been used it cannot be taken
         // again, even after deletion, exactly as for topics.
         if state.created then Left(Rejection.SubscriptionAlreadyExists)
-        else Right(List(SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId)))
+        else Right(List(SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom)))
 
       case SubscriptionCommand.RecordDelivery(ackId, message) =>
         if !state.exists then Left(Rejection.SubscriptionNotFound)
@@ -133,8 +157,8 @@ object Subscription:
 
   def evolve(state: SubscriptionState, event: SubscriptionEvent): SubscriptionState =
     event match
-      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId) =>
-        state.copy(subscriptionId = Some(subscriptionId), topicId = Some(topicId))
+      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom) =>
+        state.copy(subscriptionId = Some(subscriptionId), topicId = Some(topicId), startFrom = startFrom)
 
       case SubscriptionEvent.MessageDelivered(ackId, message) =>
         state.copy(outstanding = state.outstanding.updated(ackId, Outstanding(message, LeaseState.Available, 0)))

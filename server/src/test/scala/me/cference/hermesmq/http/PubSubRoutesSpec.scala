@@ -305,3 +305,55 @@ final class PubSubRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         }
     }
   }
+
+  /** Captures the last command, so a test can assert on the start position. */
+  private final class CapturingSubsForStart extends SubscriptionService:
+    @volatile var lastCommand: Option[SubscriptionCommand] = None
+    def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
+      lastCommand = Some(command)
+      Future.successful(CommandReply.Accepted)
+    def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(Some(Nil))
+
+  "POST /v1/subscriptions startFrom" should {
+    "default to now when the field is absent" in {
+      val subs  = CapturingSubsForStart()
+      val route = Route.seal(PubSubRoutes(topicStub(), subs).routes)
+      Post("/v1/subscriptions", json("""{"subscriptionId":"s1","topicId":"orders"}""")) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.Created
+        subs.lastCommand match
+          case Some(SubscriptionCommand.CreateSubscription(_, _, startFrom)) => startFrom shouldBe StartPosition.Now
+          case other                                                        => fail(s"unexpected command: $other")
+      }
+    }
+
+    "carry earliest through to the command" in {
+      val subs  = CapturingSubsForStart()
+      val route = Route.seal(PubSubRoutes(topicStub(), subs).routes)
+      Post(
+        "/v1/subscriptions",
+        json("""{"subscriptionId":"s1","topicId":"orders","startFrom":"earliest"}""")
+      ) ~> route ~> check {
+        val _ = status shouldBe StatusCodes.Created
+        subs.lastCommand match
+          case Some(SubscriptionCommand.CreateSubscription(_, _, startFrom)) => startFrom shouldBe StartPosition.Earliest
+          case other                                                        => fail(s"unexpected command: $other")
+      }
+    }
+
+    "accept an explicit now" in {
+      Post("/v1/subscriptions", json("""{"subscriptionId":"s1","topicId":"orders","startFrom":"now"}""")) ~> routes() ~> check {
+        status shouldBe StatusCodes.Created
+      }
+    }
+
+    "400 an unrecognised start position rather than silently defaulting" in {
+      // A caller who misspells `earliest` wants back-delivery; silently giving
+      // them `now` would be a wrong answer with no signal.
+      Post(
+        "/v1/subscriptions",
+        json("""{"subscriptionId":"s1","topicId":"orders","startFrom":"beginning"}""")
+      ) ~> routes() ~> check {
+        status shouldBe StatusCodes.BadRequest
+      }
+    }
+  }
