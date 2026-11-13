@@ -151,3 +151,16 @@ CREATE TABLE IF NOT EXISTS public.subscription_dead_letters (
 );
 CREATE INDEX IF NOT EXISTS subscription_dead_letters_sub_idx
     ON public.subscription_dead_letters (subscription_id, dead_lettered_at DESC);
+
+-- Durable record that a subscription's back-delivery has run
+-- (subscription-back-delivery). The guard for "at most once" is this marker, NOT
+-- the idempotency of delivery: `RecordDelivery` de-duplicates only while a
+-- message is still outstanding, so once a consumer acknowledges a back-delivered
+-- message, repeating the back-delivery would deliver it again with nothing left
+-- to collide against.
+CREATE TABLE IF NOT EXISTS public.subscription_backfills (
+    subscription_id VARCHAR(255) NOT NULL,
+    completed_at    TIMESTAMPTZ  NOT NULL,
+    delivered_count INT          NOT NULL,
+    PRIMARY KEY (subscription_id)
+);

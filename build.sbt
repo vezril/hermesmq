@@ -40,7 +40,7 @@ lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "vezril")
 
 lazy val pekkoVersion           = "1.2.0"
 lazy val pekkoHttpVersion       = "1.2.0"
-lazy val pekkoJdbcVersion       = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
+lazy val pekkoJdbcVersion       = "1.3.0"       // no 1.2.x release; core evicted to 1.2.0
 lazy val pekkoProjectionVersion = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
 lazy val scalaTestVersion       = "3.2.20"
 // The gRPC contract is sourced from the Lexicon (change adopt-lexicon-grpc-contracts);

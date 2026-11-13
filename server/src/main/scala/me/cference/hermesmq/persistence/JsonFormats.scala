@@ -97,8 +97,13 @@ object JsonFormats extends DefaultJsonProtocol:
 
   given RootJsonFormat[SubscriptionEvent] with
     def write(e: SubscriptionEvent): JsValue = e match
-      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId) =>
-        JsObject("type" -> JsString("SubscriptionCreated"), "subscriptionId" -> subscriptionId.toJson, "topicId" -> topicId.toJson)
+      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom) =>
+        JsObject(
+          "type"           -> JsString("SubscriptionCreated"),
+          "subscriptionId" -> subscriptionId.toJson,
+          "topicId"        -> topicId.toJson,
+          "startFrom"      -> JsString(startFrom.toString)
+        )
       case SubscriptionEvent.MessageDelivered(ackId, message) =>
         JsObject("type" -> JsString("MessageDelivered"), "ackId" -> ackId.toJson, "message" -> message.toJson)
       case SubscriptionEvent.MessageLeased(ackIds, deadline) =>
@@ -123,7 +128,18 @@ object JsonFormats extends DefaultJsonProtocol:
       val o = json.asJsObject
       o.fields("type").convertTo[String] match
         case "SubscriptionCreated" =>
-          SubscriptionEvent.SubscriptionCreated(o.fields("subscriptionId").convertTo[SubscriptionId], o.fields("topicId").convertTo[TopicId])
+          // Lenient on `startFrom`: events journaled before back-delivery existed
+          // have no such field, and a strict decoder would make every
+          // pre-existing subscription unrecoverable. Absent means `Now`, which is
+          // exactly what those events meant when they were written.
+          val startFrom = o.fields.get("startFrom") match
+            case Some(JsString("Earliest")) => StartPosition.Earliest
+            case _                          => StartPosition.Now
+          SubscriptionEvent.SubscriptionCreated(
+            o.fields("subscriptionId").convertTo[SubscriptionId],
+            o.fields("topicId").convertTo[TopicId],
+            startFrom
+          )
         case "MessageDelivered" =>
           SubscriptionEvent.MessageDelivered(o.fields("ackId").convertTo[AckId], o.fields("message").convertTo[Message])
         case "MessageLeased" =>

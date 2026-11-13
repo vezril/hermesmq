@@ -41,7 +41,8 @@ final class TenantScopedSubscriptionService(underlying: SubscriptionService, sco
 
   def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
     val qualified = command match
-      case SubscriptionCommand.CreateSubscription(sid, tid) => SubscriptionCommand.CreateSubscription(qSub(sid), qTopic(tid))
+      case SubscriptionCommand.CreateSubscription(sid, tid, startFrom) =>
+        SubscriptionCommand.CreateSubscription(qSub(sid), qTopic(tid), startFrom)
       case other                                            => other
     underlying.submit(qSub(id), qualified)
 
