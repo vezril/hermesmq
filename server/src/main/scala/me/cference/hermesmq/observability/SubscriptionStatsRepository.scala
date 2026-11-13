@@ -49,7 +49,7 @@ trait SubscriptionStatsSink:
 object SubscriptionStatsFold:
   def apply(sink: SubscriptionStatsSink, subscriptionId: SubscriptionId, event: SubscriptionEvent): Unit =
     event match
-      case SubscriptionEvent.SubscriptionCreated(_, topicId)     => sink.registerSubscription(subscriptionId, topicId)
+      case SubscriptionEvent.SubscriptionCreated(_, topicId, _)  => sink.registerSubscription(subscriptionId, topicId)
       case SubscriptionEvent.MessageDelivered(ackId, message)    => sink.delivered(subscriptionId, ackId, message.publishTime)
       case SubscriptionEvent.MessageAcknowledged(ackId)          => sink.removed(subscriptionId, ackId)
       case SubscriptionEvent.AckDeadlineExpired(_, _)            => sink.redelivered(subscriptionId)

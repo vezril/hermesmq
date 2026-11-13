@@ -110,6 +110,19 @@ final class EventSerializationSpec
       roundTrip[SubscriptionEvent](SubscriptionEvent.SubscriptionCreated(subId, topicId)) shouldBe
         SubscriptionEvent.SubscriptionCreated(subId, topicId)
     }
+    "round-trip SubscriptionCreated with an Earliest start position" in {
+      val event = SubscriptionEvent.SubscriptionCreated(subId, topicId, StartPosition.Earliest)
+      roundTrip[SubscriptionEvent](event) shouldBe event
+    }
+    "read a SubscriptionCreated journaled before startFrom existed as Now" in {
+      import JsonFormats.given
+      import spray.json.*
+      // Upgrade safety: a strict decoder here would make every subscription
+      // created before back-delivery shipped unrecoverable.
+      val legacy = """{"type":"SubscriptionCreated","subscriptionId":"sub-1","topicId":"orders"}"""
+      legacy.parseJson.convertTo[SubscriptionEvent] shouldBe
+        SubscriptionEvent.SubscriptionCreated(subId, topicId, StartPosition.Now)
+    }
     "round-trip MessageDelivered" in {
       roundTrip[SubscriptionEvent](SubscriptionEvent.MessageDelivered(ackId, message)) shouldBe
         SubscriptionEvent.MessageDelivered(ackId, message)
