@@ -49,7 +49,7 @@ lazy val scalaTestVersion       = "3.2.20"
 // v0.4.0). Verified locally against the byte-identical publishLocal stubs.
 lazy val lexiconVersion         = "0.8.0"
 lazy val logbackVersion         = "1.6.6"
-lazy val logstashLogbackVersion = "8.0"
+lazy val logstashLogbackVersion = "9.0"
 lazy val sprayJsonVersion       = "1.3.6"
 lazy val postgresVersion        = "42.7.14"
 lazy val testcontainersVersion  = "1.21.4"
