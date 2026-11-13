@@ -145,14 +145,19 @@ final class SubscriptionSpec extends AnyFunSuite:
 
   test("ExpireMessage on an outstanding expired message emits MessageExpired and removes it") {
     val events = Subscription.decide(withExpiring, ExpireMessage(ackId, now = expireAt))
-    val _ = assert(events == Right(List(MessageExpired(ackId))))
+    // The event now carries the payload (so expiry can dead-letter); assert on the id.
+    val _ = assert(events.map(_.map { case MessageExpired(a, _) => a; case other => other }) == Right(List(ackId)))
     assert(!evolveAll(events.toOption.get, withExpiring).outstanding.contains(ackId))
   }
 
   test("ExpireMessage expires regardless of attempt count or lease state") {
     // Message leased and previously redelivered, but past its TTL.
     val base = evolveAll(List(MessageDelivered(ackId, ttlMessage), AckDeadlineExpired(ackId, 3), MessageLeased(List(ackId), expireAt.plusSeconds(30))))
-    assert(Subscription.decide(base, ExpireMessage(ackId, now = expireAt.plusSeconds(1))) == Right(List(MessageExpired(ackId))))
+    assert(
+      Subscription.decide(base, ExpireMessage(ackId, now = expireAt.plusSeconds(1))).map(_.collect {
+        case MessageExpired(a, _) => a
+      }) == Right(List(ackId))
+    )
   }
 
   test("ExpireMessage before the TTL passes is a no-op") {
@@ -240,3 +245,54 @@ final class SubscriptionSpec extends AnyFunSuite:
       Subscription.decide(created, CreateSubscription(subId, topicId, StartPosition.Earliest)) ==
         Left(Rejection.SubscriptionAlreadyExists)
     )
+
+  // --- Layered TTL: shortest wins (add-layered-ttl-and-expiry-dead-lettering) ---
+
+  private def deliveredWith(subTtl: Option[scala.concurrent.duration.FiniteDuration], msg: Message) =
+    val created = Subscription
+      .decide(Subscription.empty, CreateSubscription(subId, topicId, StartPosition.Now, subTtl))
+      .toOption
+      .get
+      .foldLeft(Subscription.empty)(Subscription.evolve)
+    Subscription
+      .decide(created, RecordDelivery(ackId, msg))
+      .toOption
+      .get
+      .foldLeft(created)(Subscription.evolve)
+
+  private def msgExpiring(at: Option[Instant]) =
+    Message.from(MessageId.from("m-1").toOption.get, "body".getBytes, Map.empty, t0, at).toOption.get
+
+  test("a subscription TTL earlier than the message's expiry shortens it"):
+    val state = deliveredWith(Some(60.seconds), msgExpiring(Some(t0.plusSeconds(3600))))
+    assert(state.outstanding(ackId).expireTime == Some(t0.plusSeconds(60)))
+
+  test("a subscription TTL later than the message's expiry does not extend it"):
+    val state = deliveredWith(Some(3600.seconds), msgExpiring(Some(t0.plusSeconds(60))))
+    assert(state.outstanding(ackId).expireTime == Some(t0.plusSeconds(60)))
+
+  test("a subscription TTL applies when the message carries no expiry"):
+    val state = deliveredWith(Some(60.seconds), msgExpiring(None))
+    assert(state.outstanding(ackId).expireTime == Some(t0.plusSeconds(60)))
+
+  test("no subscription TTL leaves the message's own expiry alone"):
+    val state = deliveredWith(None, msgExpiring(Some(t0.plusSeconds(60))))
+    assert(state.outstanding(ackId).expireTime == Some(t0.plusSeconds(60)))
+
+  test("no TTL anywhere means the outstanding message never expires"):
+    val state = deliveredWith(None, msgExpiring(None))
+    assert(state.outstanding(ackId).expireTime.isEmpty)
+
+  test("ExpireMessage tests the resolved per-subscription expiry, not the message's"):
+    // The message would live an hour; this subscription's TTL cuts it to a minute.
+    val state = deliveredWith(Some(60.seconds), msgExpiring(Some(t0.plusSeconds(3600))))
+    val justAfter = t0.plusSeconds(61)
+    assert(
+      Subscription.decide(state, ExpireMessage(ackId, justAfter)).map(_.collect {
+        case MessageExpired(a, _) => a
+      }) == Right(List(ackId))
+    )
+
+  test("ExpireMessage is a no-op before the resolved expiry"):
+    val state = deliveredWith(Some(3600.seconds), msgExpiring(None))
+    assert(Subscription.decide(state, ExpireMessage(ackId, t0.plusSeconds(60))) == Right(Nil))

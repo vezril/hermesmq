@@ -41,7 +41,7 @@ object LeaseProjection:
       case SubscriptionEvent.AckDeadlineExpired(ackId, _)         => repository.cleared(subscriptionId, ackId)
       case SubscriptionEvent.MessageAcknowledged(ackId)          => repository.cleared(subscriptionId, ackId)
       case SubscriptionEvent.MessageDeadLettered(ackId, _, _)    => repository.cleared(subscriptionId, ackId)
-      case SubscriptionEvent.MessageExpired(ackId)               => repository.cleared(subscriptionId, ackId)
+      case SubscriptionEvent.MessageExpired(ackId, _)            => repository.cleared(subscriptionId, ackId)
       case _                                                      => Future.unit
 
   /** Extract the subscription id from a `Subscription|<id>` persistence id. */

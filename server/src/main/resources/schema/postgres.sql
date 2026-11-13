@@ -107,6 +107,11 @@ CREATE TABLE IF NOT EXISTS public.subscription_stats (
     dead_lettered_total BIGINT       NOT NULL DEFAULT 0,
     PRIMARY KEY (subscription_id)
 );
+-- Added with layered TTL: TTL expiry is deliberate data loss, and counting it is
+-- the minimum an operator needs to see it happening. ADD COLUMN IF NOT EXISTS so
+-- the boot-time migrator stays idempotent over an already-provisioned database.
+ALTER TABLE public.subscription_stats
+    ADD COLUMN IF NOT EXISTS expired_total BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS public.topic_stats (
     topic_id        VARCHAR(255) NOT NULL,

@@ -12,12 +12,17 @@ import scala.util.control.NonFatal
   * @param maxDeliveryAttempts attempts before a message is dead-lettered; `0` = unlimited
   * @param sweepInterval       how often the sweeper scans for overdue leases
   * @param deadLetterTopic     topic exhausted messages are republished to; `None` = drop
+  * @param deadLetterOnExpiry  route TTL-expired messages to the dead-letter topic instead of dropping them
   */
 final case class RedeliveryConfig(
     ackDeadline: FiniteDuration,
     maxDeliveryAttempts: Int,
     sweepInterval: FiniteDuration,
-    deadLetterTopic: Option[TopicId]
+    deadLetterTopic: Option[TopicId],
+    // Defaults to false: TTL expiry has always dropped, and turning this on
+    // changes the volume landing on the dead-letter topic, which an operator
+    // should opt into rather than discover.
+    deadLetterOnExpiry: Boolean = false
 )
 
 object RedeliveryConfig:
@@ -32,10 +37,11 @@ object RedeliveryConfig:
       maxAttempts   <- read(config.getInt("hermesmq.redelivery.max-delivery-attempts"), "hermesmq.redelivery.max-delivery-attempts")
       sweepInterval <- readDuration(config, "hermesmq.redelivery.sweep-interval")
       topic         <- readDeadLetterTopic(config)
+      dlqOnExpiry   <- read(config.getBoolean("hermesmq.redelivery.dead-letter-on-expiry"), "hermesmq.redelivery.dead-letter-on-expiry")
       _             <- requirePositive(ackDeadline, "hermesmq.redelivery.ack-deadline")
       _             <- requirePositive(sweepInterval, "hermesmq.redelivery.sweep-interval")
       _             <- requireNonNegative(maxAttempts, "hermesmq.redelivery.max-delivery-attempts")
-    yield RedeliveryConfig(ackDeadline, maxAttempts, sweepInterval, topic)
+    yield RedeliveryConfig(ackDeadline, maxAttempts, sweepInterval, topic, dlqOnExpiry)
 
   private def read[A](value: => A, path: String): Either[ConfigError, A] =
     try Right(value)

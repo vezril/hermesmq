@@ -54,7 +54,7 @@ object SubscriptionBackfill:
       now: Instant
   )(using ExecutionContext): Future[Int] =
     event match
-      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, StartPosition.Earliest) =>
+      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, StartPosition.Earliest, _) =>
         markers.isComplete(subscriptionId).flatMap {
           case true =>
             // Already done. Re-running would re-deliver anything the consumer has

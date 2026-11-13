@@ -1,6 +1,7 @@
 package me.cference.hermesmq.domain
 
 import java.time.Instant
+import scala.concurrent.duration.Duration
 import scala.concurrent.duration.FiniteDuration
 
 /** Where a new subscription starts reading its topic.
@@ -19,7 +20,8 @@ enum SubscriptionCommand:
   case CreateSubscription(
       subscriptionId: SubscriptionId,
       topicId: TopicId,
-      startFrom: StartPosition = StartPosition.Now
+      startFrom: StartPosition = StartPosition.Now,
+      ttl: Option[FiniteDuration] = None
   )
   case RecordDelivery(ackId: AckId, message: Message)
   case Lease(max: Int, ackDeadline: FiniteDuration, now: Instant)
@@ -38,7 +40,8 @@ enum SubscriptionEvent:
   case SubscriptionCreated(
       subscriptionId: SubscriptionId,
       topicId: TopicId,
-      startFrom: StartPosition = StartPosition.Now
+      startFrom: StartPosition = StartPosition.Now,
+      ttl: Option[FiniteDuration] = None
   )
   case MessageDelivered(ackId: AckId, message: Message)
   case MessageLeased(ackIds: List[AckId], deadline: Instant)
@@ -46,7 +49,13 @@ enum SubscriptionEvent:
   case AckDeadlineModified(ackId: AckId, deadline: Instant)
   case AckDeadlineExpired(ackId: AckId, attempt: Int)
   case MessageDeadLettered(ackId: AckId, message: Message, attempt: Int)
-  case MessageExpired(ackId: AckId)
+  /** Carries the expired message so it can be dead-lettered rather than dropped.
+    *
+    * `Option` because events journaled before dead-letter-on-expiry existed have
+    * no payload: those decode as `None` and can only be dropped, which is
+    * exactly what they meant when they were written.
+    */
+  case MessageExpired(ackId: AckId, message: Option[Message] = None)
   /** Carries the topic as well as the id: the routing index is keyed by topic,
     * and a consumer of this event should not have to go and ask what it was.
     */
@@ -62,15 +71,33 @@ enum LeaseState:
 /** A delivered-but-unacknowledged message: the payload, its lease state, and the
   * number of delivery attempts that have expired (folded from events).
   */
-final case class Outstanding(message: Message, lease: LeaseState, attempts: Int):
+/** A delivered-but-unacknowledged message.
+  *
+  * `expireTime` is the expiry resolved **for this subscription** at delivery
+  * time -- the earliest of the message's own expiry and this subscription's TTL.
+  * It lives on the entry rather than being recomputed at sweep time on purpose:
+  * expiry must reflect what was agreed when the message was delivered, not
+  * whatever the configuration happens to say later. Recomputing would let a TTL
+  * change retroactively move existing messages' expiry.
+  */
+final case class Outstanding(
+    message: Message,
+    lease: LeaseState,
+    attempts: Int,
+    expireTime: Option[Instant] = None
+):
   def available: Boolean = lease == LeaseState.Available
+
+  /** Expired as of `now`, per this subscription's resolved expiry. */
+  def expired(now: Instant): Boolean = expireTime.exists(!_.isAfter(now))
 
 final case class SubscriptionState(
     subscriptionId: Option[SubscriptionId],
     topicId: Option[TopicId],
     outstanding: Map[AckId, Outstanding],
     deleted: Boolean = false,
-    startFrom: StartPosition = StartPosition.Now
+    startFrom: StartPosition = StartPosition.Now,
+    ttl: Option[FiniteDuration] = None
 ):
   /** The id has been used at some point, whether or not it was later deleted.
     * Mirrors TopicState: an id is never reusable, because the journal for it
@@ -95,16 +122,32 @@ final case class SubscriptionState(
   */
 object Subscription:
 
+  /** The expiry for one subscription's copy of a message: the earliest of the
+    * message's own expiry (already resolved at publish from the per-publish TTL,
+    * the topic's, or the global default) and this subscription's TTL measured
+    * from publish time.
+    *
+    * `min` is what makes the layering compose -- it is associative and
+    * commutative, so publish-time and delivery-time resolution reach the same
+    * answer regardless of order.
+    */
+  def resolveExpiry(message: Message, subscriptionTtl: Option[FiniteDuration]): Option[Instant] =
+    val fromSubscription = subscriptionTtl.filter(_ > Duration.Zero).map(ttl => message.publishTime.plusNanos(ttl.toNanos))
+    (message.expireTime, fromSubscription) match
+      case (Some(a), Some(b)) => Some(if a.isBefore(b) then a else b)
+      case (a, None)          => a
+      case (None, b)          => b
+
   val empty: SubscriptionState =
     SubscriptionState(subscriptionId = None, topicId = None, outstanding = Map.empty)
 
   def decide(state: SubscriptionState, command: SubscriptionCommand): Either[Rejection, List[SubscriptionEvent]] =
     command match
-      case SubscriptionCommand.CreateSubscription(subscriptionId, topicId, startFrom) =>
+      case SubscriptionCommand.CreateSubscription(subscriptionId, topicId, startFrom, ttl) =>
         // `created`, not `exists`: once an id has been used it cannot be taken
         // again, even after deletion, exactly as for topics.
         if state.created then Left(Rejection.SubscriptionAlreadyExists)
-        else Right(List(SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom)))
+        else Right(List(SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom, ttl)))
 
       case SubscriptionCommand.RecordDelivery(ackId, message) =>
         if !state.exists then Left(Rejection.SubscriptionNotFound)
@@ -130,7 +173,7 @@ object Subscription:
 
       case SubscriptionCommand.ExpireAckDeadline(ackId, now, maxAttempts) =>
         state.outstanding.get(ackId) match
-          case Some(Outstanding(message, LeaseState.Leased(deadline), attempts)) if !deadline.isAfter(now) =>
+          case Some(Outstanding(message, LeaseState.Leased(deadline), attempts, _)) if !deadline.isAfter(now) =>
             val attempt = attempts + 1
             if maxAttempts > 0 && attempt >= maxAttempts then
               Right(List(SubscriptionEvent.MessageDeadLettered(ackId, message, attempt)))
@@ -141,7 +184,7 @@ object Subscription:
         // Wall-clock TTL expiry: drop an outstanding message past its expireTime,
         // in any lease state and regardless of attempt count.
         state.outstanding.get(ackId) match
-          case Some(o) if o.message.expired(now) => Right(List(SubscriptionEvent.MessageExpired(ackId)))
+          case Some(o) if o.expired(now) => Right(List(SubscriptionEvent.MessageExpired(ackId, Some(o.message))))
           case _                                 => Right(Nil) // not outstanding, or not yet expired → no-op
 
       case SubscriptionCommand.DeleteSubscription =>
@@ -157,11 +200,29 @@ object Subscription:
 
   def evolve(state: SubscriptionState, event: SubscriptionEvent): SubscriptionState =
     event match
-      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom) =>
-        state.copy(subscriptionId = Some(subscriptionId), topicId = Some(topicId), startFrom = startFrom)
+      case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, startFrom, ttl) =>
+        state.copy(
+          subscriptionId = Some(subscriptionId),
+          topicId = Some(topicId),
+          startFrom = startFrom,
+          ttl = ttl
+        )
 
       case SubscriptionEvent.MessageDelivered(ackId, message) =>
-        state.copy(outstanding = state.outstanding.updated(ackId, Outstanding(message, LeaseState.Available, 0)))
+        state.copy(
+          outstanding = state.outstanding.updated(
+            ackId,
+            Outstanding(
+              message,
+              LeaseState.Available,
+              0,
+              // Shortest wins: this subscription's TTL may bring the expiry
+              // forward but never push it out. Resolved here, at delivery, so a
+              // later TTL change cannot move it.
+              expireTime = Subscription.resolveExpiry(message, state.ttl)
+            )
+          )
+        )
 
       case SubscriptionEvent.MessageLeased(ackIds, deadline) =>
         val updated = ackIds.foldLeft(state.outstanding) { (m, id) =>
@@ -183,7 +244,7 @@ object Subscription:
       case SubscriptionEvent.MessageDeadLettered(ackId, _, _) =>
         state.copy(outstanding = state.outstanding.removed(ackId))
 
-      case SubscriptionEvent.MessageExpired(ackId) =>
+      case SubscriptionEvent.MessageExpired(ackId, _) =>
         state.copy(outstanding = state.outstanding.removed(ackId))
 
       case SubscriptionEvent.SubscriptionDeleted(_, _) =>

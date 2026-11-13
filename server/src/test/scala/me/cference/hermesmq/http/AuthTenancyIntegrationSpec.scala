@@ -41,7 +41,7 @@ final class AuthTenancyIntegrationSpec extends AnyWordSpec with Matchers with Sc
   private final class MemTopics extends TopicService:
     val store = TrieMap.empty[String, Map[String, String]]
     def submit(id: TopicId, command: TopicCommand): Future[CommandReply] = command match
-      case TopicCommand.CreateTopic(tid, labels) =>
+      case TopicCommand.CreateTopic(tid, labels, _) =>
         if store.contains(tid.value) then Future.successful(CommandReply.Rejected(Rejection.TopicAlreadyExists))
         else { val _ = store.put(tid.value, labels); Future.successful(CommandReply.Accepted) }
       case _ => Future.successful(CommandReply.Accepted)

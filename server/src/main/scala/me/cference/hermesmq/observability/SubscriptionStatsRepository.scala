@@ -26,7 +26,8 @@ final case class SubscriptionStats(
     backlog: Int,
     oldestUnackedAt: Option[Instant],
     redeliveredTotal: Long,
-    deadLetteredTotal: Long
+    deadLetteredTotal: Long,
+    expiredTotal: Long = 0L
 ):
   def oldestUnackedAgeSeconds(now: Instant): Long =
     oldestUnackedAt.fold(0L)(at => math.max(0L, Duration.between(at, now).getSeconds))
@@ -34,6 +35,9 @@ final case class SubscriptionStats(
 /** The write operations a stats projection performs, storage-agnostic so the
   * fold logic can be tested in memory and applied transactionally over JDBC.
   */
+/** The per-subscription counters, named so a third one cannot be mis-positioned. */
+private[observability] final case class StatsCounters(redelivered: Long = 0L, deadLettered: Long = 0L, expired: Long = 0L)
+
 trait SubscriptionStatsSink:
   def registerSubscription(subscriptionId: SubscriptionId, topicId: TopicId): Unit
   def unregisterSubscription(subscriptionId: SubscriptionId): Unit
@@ -42,6 +46,12 @@ trait SubscriptionStatsSink:
   def redelivered(subscriptionId: SubscriptionId): Unit
   def deadLettered(subscriptionId: SubscriptionId): Unit
 
+  /** A TTL expiry: drops the message from the backlog AND counts it. Counting
+    * matters because expiry is silent in the data path -- without this an
+    * operator cannot tell deliberate TTL loss from nothing happening.
+    */
+  def expired(subscriptionId: SubscriptionId, ackId: AckId): Unit
+
 /** Pure fold of a subscription event onto a [[SubscriptionStatsSink]]. Backlog
   * grows on delivery and shrinks on ack/dead-letter; redelivery (ack-deadline
   * expiry) bumps the redelivery count without touching the backlog.
@@ -49,13 +59,13 @@ trait SubscriptionStatsSink:
 object SubscriptionStatsFold:
   def apply(sink: SubscriptionStatsSink, subscriptionId: SubscriptionId, event: SubscriptionEvent): Unit =
     event match
-      case SubscriptionEvent.SubscriptionCreated(_, topicId, _)  => sink.registerSubscription(subscriptionId, topicId)
+      case SubscriptionEvent.SubscriptionCreated(_, topicId, _, _) => sink.registerSubscription(subscriptionId, topicId)
       case SubscriptionEvent.MessageDelivered(ackId, message)    => sink.delivered(subscriptionId, ackId, message.publishTime)
       case SubscriptionEvent.MessageAcknowledged(ackId)          => sink.removed(subscriptionId, ackId)
       case SubscriptionEvent.AckDeadlineExpired(_, _)            => sink.redelivered(subscriptionId)
       case SubscriptionEvent.MessageDeadLettered(ackId, _, _)    =>
         sink.deadLettered(subscriptionId); sink.removed(subscriptionId, ackId)
-      case SubscriptionEvent.MessageExpired(ackId)               => sink.removed(subscriptionId, ackId)
+      case SubscriptionEvent.MessageExpired(ackId, _)            => sink.expired(subscriptionId, ackId)
       // A deleted subscription leaves the listing entirely rather than lingering
       // with a frozen backlog nothing will ever acknowledge.
       case SubscriptionEvent.SubscriptionDeleted(_, _)           => sink.unregisterSubscription(subscriptionId)
@@ -76,11 +86,13 @@ final class InMemorySubscriptionStatsRepository(using ExecutionContext)
 
   private val topics   = new AtomicReference(Map.empty[SubscriptionId, TopicId])
   private val backlog  = new AtomicReference(Map.empty[(SubscriptionId, AckId), Instant])
-  private val counters = new AtomicReference(Map.empty[SubscriptionId, (Long, Long)]) // (redelivered, deadLettered)
+  // A named record rather than a widening tuple: this is the third counter, and
+  // `(r, d, e)` at every call site is how off-by-one-position bugs happen.
+  private val counters = new AtomicReference(Map.empty[SubscriptionId, StatsCounters])
 
   def registerSubscription(subscriptionId: SubscriptionId, topicId: TopicId): Unit =
     val _ = topics.updateAndGet(_.updated(subscriptionId, topicId))
-    val _ = counters.updateAndGet(m => if m.contains(subscriptionId) then m else m.updated(subscriptionId, (0L, 0L)))
+    val _ = counters.updateAndGet(m => if m.contains(subscriptionId) then m else m.updated(subscriptionId, StatsCounters()))
 
   def unregisterSubscription(subscriptionId: SubscriptionId): Unit =
     val _ = topics.updateAndGet(_.removed(subscriptionId))
@@ -93,23 +105,26 @@ final class InMemorySubscriptionStatsRepository(using ExecutionContext)
   def removed(subscriptionId: SubscriptionId, ackId: AckId): Unit =
     val _ = backlog.updateAndGet(_.removed((subscriptionId, ackId)))
 
+  private def bump(subscriptionId: SubscriptionId)(f: StatsCounters => StatsCounters): Unit =
+    val _ = counters.updateAndGet(m => m.updated(subscriptionId, f(m.getOrElse(subscriptionId, StatsCounters()))))
+
   def redelivered(subscriptionId: SubscriptionId): Unit =
-    val _ = counters.updateAndGet { m =>
-      val (r, d) = m.getOrElse(subscriptionId, (0L, 0L)); m.updated(subscriptionId, (r + 1, d))
-    }
+    bump(subscriptionId)(c => c.copy(redelivered = c.redelivered + 1))
 
   def deadLettered(subscriptionId: SubscriptionId): Unit =
-    val _ = counters.updateAndGet { m =>
-      val (r, d) = m.getOrElse(subscriptionId, (0L, 0L)); m.updated(subscriptionId, (r, d + 1))
-    }
+    bump(subscriptionId)(c => c.copy(deadLettered = c.deadLettered + 1))
+
+  def expired(subscriptionId: SubscriptionId, ackId: AckId): Unit =
+    removed(subscriptionId, ackId)
+    bump(subscriptionId)(c => c.copy(expired = c.expired + 1))
 
   def list(): Future[List[SubscriptionStats]] =
     Future {
       val bl = backlog.get()
       topics.get().toList.map { (sub, topic) =>
         val times      = bl.collect { case ((s, _), t) if s == sub => t }
-        val (red, dead) = counters.get().getOrElse(sub, (0L, 0L))
-        SubscriptionStats(sub, topic, times.size, times.minOption, red, dead)
+        val c = counters.get().getOrElse(sub, StatsCounters())
+        SubscriptionStats(sub, topic, times.size, times.minOption, c.redelivered, c.deadLettered, c.expired)
       }
     }
 
@@ -149,8 +164,13 @@ final class JdbcSubscriptionStatsSink(conn: Connection) extends SubscriptionStat
     val ps = conn.prepareStatement("DELETE FROM subscription_backlog WHERE subscription_id = ? AND ack_id = ?")
     ps.setString(1, subscriptionId.value); ps.setString(2, ackId.value); val _ = ps.executeUpdate()
 
-  def redelivered(subscriptionId: SubscriptionId): Unit = bump("redelivered_total", subscriptionId)
+  def redelivered(subscriptionId: SubscriptionId): Unit  = bump("redelivered_total", subscriptionId)
   def deadLettered(subscriptionId: SubscriptionId): Unit = bump("dead_lettered_total", subscriptionId)
+
+  def expired(subscriptionId: SubscriptionId, ackId: AckId): Unit =
+    // Both effects: the message leaves the backlog and the expiry is counted.
+    removed(subscriptionId, ackId)
+    bump("expired_total", subscriptionId)
 
   private def bump(column: String, subscriptionId: SubscriptionId): Unit =
     val ps = conn.prepareStatement(
@@ -169,11 +189,11 @@ final class JdbcSubscriptionStatsRepository(dbConfig: DbConfig)(using ExecutionC
         try
           val rs = conn
             .prepareStatement(
-              """SELECT s.subscription_id, s.topic_id, s.redelivered_total, s.dead_lettered_total,
+              """SELECT s.subscription_id, s.topic_id, s.redelivered_total, s.dead_lettered_total, s.expired_total,
                 |       count(b.ack_id) AS backlog, min(b.delivered_at) AS oldest
                 |FROM subscription_stats s
                 |LEFT JOIN subscription_backlog b ON b.subscription_id = s.subscription_id
-                |GROUP BY s.subscription_id, s.topic_id, s.redelivered_total, s.dead_lettered_total""".stripMargin
+                |GROUP BY s.subscription_id, s.topic_id, s.redelivered_total, s.dead_lettered_total, s.expired_total""".stripMargin
             )
             .executeQuery()
           Iterator
@@ -189,7 +209,8 @@ final class JdbcSubscriptionStatsRepository(dbConfig: DbConfig)(using ExecutionC
                 r.getInt("backlog"),
                 Option(r.getTimestamp("oldest")).map(_.toInstant),
                 r.getLong("redelivered_total"),
-                r.getLong("dead_lettered_total")
+                r.getLong("dead_lettered_total"),
+                r.getLong("expired_total")
               )
             }
             .toList

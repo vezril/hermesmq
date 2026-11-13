@@ -55,6 +55,7 @@ and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 | Dead-letter operations: non-destructive browse + idempotent redrive | ✅ Done |
 | Effectively-once consumption: stable `ackId` dedup contract, specified and tested | ✅ Done |
 | Back-delivery: opt-in `startFrom: earliest` replays a topic's retained history | ✅ Done |
+| Layered TTL (publish / topic / subscription / global, shortest wins) + dead-letter-on-expiry | ✅ Done |
 
 ## Roadmap
 
@@ -64,9 +65,8 @@ listed here so the guarantees are legible without reading the whole document:
 | Not implemented | Why / what it would take |
 |-----------------|--------------------------|
 | **Exactly-once delivery** — *not planned, and not possible* | Not a gap to be filled. A broker cannot make a consumer's side effects atomic with its ack, so it cannot know whether redelivery would duplicate work. HermesMQ offers at-least-once delivery with a stable `ackId` to deduplicate on — see [Delivery semantics](#delivery-semantics). |
-| **gRPC parity for `startFrom`** | Back-delivery ([`startFrom: earliest`](#back-delivery-to-a-new-subscription)) is REST-only: `CreateSubscriptionRequest` comes from the pinned Lexicon artifact, so the field needs a Lexicon change and a pin bump. gRPC-created subscriptions behave as `now`. |
+| **gRPC parity for `startFrom` and the TTL fields** | Back-delivery ([`startFrom: earliest`](#back-delivery-to-a-new-subscription)) and per-topic/per-subscription `ttlSeconds` are REST-only: those request types come from the pinned Lexicon artifact, so each field needs a Lexicon change and a pin bump. gRPC callers get the defaults — `now`, and no topic/subscription TTL. gRPC publish's own `ttl_seconds` is unaffected. |
 | **Rebuilding the topic→subscriptions index from the journal on restart** | The cluster-shared index is a durable read model maintained **forward** by a projection; it is not reconstructable from a from-zero replay once retention has purged events. |
-| **Per-topic / per-subscription TTL, and dead-letter-on-expiry** | TTL today is a global default plus a per-publish override, and expiry drops silently rather than leaving an audit trail. See [Message TTL](#message-ttl). |
 | **Cluster-wide aggregation of the consumer/producer gauges** | `hermesmq_subscription_consumers` and `hermesmq_topic_producers` are in-memory and **per-node** — exact on a single replica, partial across a cluster. The metric names and meanings would not change. |
 | **JWT/OIDC and mTLS auth** | Auth is static salted-hash API keys, to keep the broker dependency-light. `/metrics` is unauthenticated by design. See [Authentication](#authentication--multi-tenancy). |
 | **Versioned schema migrations** | Boot-time migration is idempotent *apply-the-current-schema*; destructive schema evolution would need a real migration tool. See [Schema self-migration](#schema-self-migration). |
@@ -222,9 +222,64 @@ curl -X POST localhost:8080/v1/topics/orders/messages \
   -H 'Content-Type: application/json' -d '{"payload":"stale-in-60s","ttlSeconds":60}'   # 202
 ```
 
-> **Future:** per-topic/per-subscription TTL and dead-letter-on-expiry (an audit trail
-> for expired messages) are natural next options; today TTL is a global default plus a
-> per-publish override, and expiry drops silently.
+**Four layers, and one rule: shortest wins.** A TTL may come from the publish
+(`ttlSeconds`), the topic, the receiving subscription, or the global default. The
+effective expiry is the **earliest** any of them implies — *any layer may shorten
+a message's lifetime, none may extend it.*
+
+```bash
+# A topic whose data is stale after an hour.
+curl -X POST localhost:8080/v1/topics \
+  -H 'Content-Type: application/json' -d '{"topicId":"orders","ttlSeconds":3600}'
+
+# A subscription that wants only fresh messages — shortens its own copy to 60s.
+curl -X POST localhost:8080/v1/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{"subscriptionId":"s1","topicId":"orders","ttlSeconds":60}'
+```
+
+That rule was chosen over the conventional "most specific wins" on purpose:
+most-specific would let a subscription keep a message alive past the point its
+topic declared the data stale, which inverts ownership. Shortest-wins fails in
+the safe direction — the surprise is earlier expiry, never unexpected retention.
+
+Two consequences worth knowing:
+
+- **Changing a topic's TTL is forward-looking.** A message's expiry is fixed when
+  it is published; already-published messages keep theirs. Likewise a
+  subscription's TTL is resolved at delivery, so changing it does not move the
+  expiry of messages it already holds.
+- **Two subscriptions on one topic can expire the same message at different
+  times**, because each resolves its own copy.
+
+| Variable              | Default | Description                                        |
+|-----------------------|---------|----------------------------------------------------|
+| `HERMESMQ_DEAD_LETTER_ON_EXPIRY`| `false` | Route expired messages to the dead-letter topic instead of dropping them |
+
+### Dead-letter-on-expiry
+
+TTL is deliberate data loss, and until now the broker performed it without
+leaving a trace. Two things change that:
+
+- **`HERMESMQ_DEAD_LETTER_ON_EXPIRY=true`** republishes an expired message to the
+  dead-letter topic instead of dropping it, carrying an **`x-expired-at`**
+  attribute. It deliberately carries *no* delivery-attempt attributes — the
+  message ran out of time, it did not fail delivery, and reporting an attempt
+  count would invite the wrong diagnosis. Expired dead-letters are immediately
+  visible through [dead-letter browse and redrive](#dead-letter-operations).
+- **`hermesmq_messages_expired_total{subscription}`** counts expiries whether
+  they are dropped or dead-lettered, so the volume is observable even with
+  dead-lettering off.
+
+Default is off: enabling it changes how much lands on your dead-letter topic, so
+it is opt-in rather than something to discover. Note also that the dead-letter
+topic is itself a topic — if you give *it* a TTL, dead-letters can expire too.
+That is not special-cased, because a silent exception there would be more
+surprising than the rule.
+
+A negative `ttlSeconds` on a topic or subscription is a `400`, not a silent "off":
+a caller sending `-1` is expressing something, and treating it as no-TTL would be
+a wrong answer with no signal.
 
 ### Idempotent publish
 
@@ -596,6 +651,7 @@ Exposed metrics:
 | `hermesmq_subscription_consumers` | gauge | `subscription` | Distinct named consumers active within the window |
 | `hermesmq_publish_deduplicated_total` | counter | `topic` | Publishes collapsed as duplicates (per-node, best-effort) |
 | `hermesmq_topic_producers` | gauge | `topic` | Distinct named producers active within the window (per-node) |
+| `hermesmq_messages_expired_total` | counter | `subscription` | Messages expired under their TTL (counted whether dropped or dead-lettered) |
 
 ```bash
 curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...}]

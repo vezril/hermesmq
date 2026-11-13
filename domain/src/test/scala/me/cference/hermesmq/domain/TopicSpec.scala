@@ -147,3 +147,58 @@ final class TopicSpec extends AnyFunSuite:
     val after = Topic.evolve(mid, MessagePublished(keyed("m-new", Some("new"), t0.plusSeconds(11 * 60))), window)
     assert(after.seen.keySet == Set("recent", "new"))
   }
+
+  // --- Topic TTL: applied at publish, shortest wins ---
+
+  private def topicWithTtl(ttl: Option[scala.concurrent.duration.FiniteDuration]) =
+    Topic
+      .decide(Topic.empty, TopicCommand.CreateTopic(topicId, Map.empty, ttl))
+      .toOption
+      .get
+      .foldLeft(Topic.empty)((s, e) => Topic.evolve(s, e))
+
+  private def publishedExpiry(state: TopicState, msg: Message): Option[Instant] =
+    Topic.decide(state, TopicCommand.Publish(msg)).toOption.get.collectFirst {
+      case TopicEvent.MessagePublished(m) => m.expireTime
+    }.flatten
+
+  private def msgTtl(at: Option[Instant]) =
+    Message.from(MessageId.from("t-1").toOption.get, "b".getBytes, Map.empty, t0, at).toOption.get
+
+  test("a topic's TTL stamps the expiry of a publish that names none"):
+    val state = topicWithTtl(Some(3600.seconds))
+    assert(publishedExpiry(state, msgTtl(None)) == Some(t0.plusSeconds(3600)))
+
+  test("a shorter per-publish expiry beats the topic's TTL"):
+    val state = topicWithTtl(Some(3600.seconds))
+    assert(publishedExpiry(state, msgTtl(Some(t0.plusSeconds(60)))) == Some(t0.plusSeconds(60)))
+
+  test("a longer per-publish expiry is brought forward to the topic's TTL"):
+    // Shortest wins: a publisher cannot outlive the topic's declaration.
+    val state = topicWithTtl(Some(60.seconds))
+    assert(publishedExpiry(state, msgTtl(Some(t0.plusSeconds(3600)))) == Some(t0.plusSeconds(60)))
+
+  test("a topic with no TTL leaves the publish's own expiry untouched"):
+    val state = topicWithTtl(None)
+    assert(publishedExpiry(state, msgTtl(Some(t0.plusSeconds(60)))) == Some(t0.plusSeconds(60)))
+
+  test("the topic TTL is reflected in state and survives evolve"):
+    assert(topicWithTtl(Some(120.seconds)).ttl == Some(120.seconds))
+
+  test("updating a topic's TTL emits TopicTtlUpdated and changes later publishes only"):
+    val state   = topicWithTtl(Some(3600.seconds))
+    val events  = Topic.decide(state, TopicCommand.UpdateTopic(Map.empty, Some(60.seconds))).toOption.get
+    val _       = assert(events.contains(TopicEvent.TopicTtlUpdated(topicId, Some(60.seconds))))
+    val updated = events.foldLeft(state)((s, e) => Topic.evolve(s, e))
+    // A later publish gets the new, shorter TTL.
+    assert(publishedExpiry(updated, msgTtl(None)) == Some(t0.plusSeconds(60)))
+
+  test("updating only labels leaves the TTL in place"):
+    val state   = topicWithTtl(Some(60.seconds))
+    val updated = Topic
+      .decide(state, TopicCommand.UpdateTopic(Map("k" -> "v")))
+      .toOption
+      .get
+      .foldLeft(state)((s, e) => Topic.evolve(s, e))
+    val _ = assert(updated.ttl == Some(60.seconds))
+    assert(updated.labels == Map("k" -> "v"))
