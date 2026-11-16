@@ -61,15 +61,33 @@ final class PubSubGrpcService(
   def createSubscription(in: CreateSubscriptionRequest): Future[CreateSubscriptionResponse] =
     (
       TenantScope.validateExternalId(in.subscriptionId).flatMap(SubscriptionId.from),
-      TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from)
+      TenantScope.validateExternalId(in.topicId).flatMap(TopicId.from),
+      ttlOf(in.ttlSeconds)
     ) match
-      case (Right(sid), Right(tid)) =>
-        subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid)).flatMap {
+      case (Right(sid), Right(tid), Right(ttl)) =>
+        val startFrom = startPositionOf(in.startFrom)
+        subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid, startFrom, ttl)).flatMap {
           case CommandReply.Accepted            => Future.successful(CreateSubscriptionResponse())
           case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
           case CommandReply.Published(_, _)     => Future.failed(new IllegalStateException("unexpected Published reply for CreateSubscription"))
         }
-      case _ => Future.failed(GrpcErrors.invalid(ValidationError("invalid subscriptionId or topicId")))
+      case (_, _, Left(err)) => Future.failed(GrpcErrors.invalid(ValidationError(err)))
+      case _                 => Future.failed(GrpcErrors.invalid(ValidationError("invalid subscriptionId or topicId")))
+
+  /** UNSPECIFIED (the enum's zero value) means NOW, so a client generated before
+    * `start_from` existed keeps precisely its previous behaviour. An unrecognised
+    * value also maps to NOW, since protobuf enums are open -- a stricter rejection
+    * would make this fail against a client built from a NEWER contract, which is
+    * exactly what UNSPECIFIED=NOW is designed to prevent.
+    */
+  private def startPositionOf(raw: me.cference.hermesmq.grpc.StartPosition): me.cference.hermesmq.domain.StartPosition = raw match
+    case me.cference.hermesmq.grpc.StartPosition.START_POSITION_EARLIEST => me.cference.hermesmq.domain.StartPosition.Earliest
+    case _                                                        => me.cference.hermesmq.domain.StartPosition.Now
+
+  private def ttlOf(raw: Int): Either[String, Option[FiniteDuration]] =
+    if raw < 0 then Left(s"ttl_seconds must not be negative, was $raw")
+    else if raw == 0 then Right(None)
+    else Right(Some(raw.seconds))
 
   def pull(in: PullRequest): Future[PullResponse] =
     withSubId(in.subscriptionId) { sid =>

@@ -324,3 +324,51 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
         Status.Code.NOT_FOUND
     }
   }
+
+  "subscription start_from and ttl_seconds (add-topic-subscription-ttl-and-start-position)" should {
+    "forward START_POSITION_EARLIEST and ttl_seconds to CreateSubscription" in {
+      var seen: Option[SubscriptionCommand] = None
+      val subs = new SubscriptionService:
+        def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
+          seen = Some(command); Future.successful(CommandReply.Accepted)
+        def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(Some(Nil))
+      val svc = PubSubGrpcService(topics(), subs)
+      val _ = await(svc.createSubscription(CreateSubscriptionRequest(
+        subscriptionId = "s1",
+        topicId = "orders",
+        startFrom = me.cference.hermesmq.grpc.StartPosition.START_POSITION_EARLIEST,
+        ttlSeconds = 60
+      )))
+      seen match
+        case Some(SubscriptionCommand.CreateSubscription(_, _, start, ttl)) =>
+          val _ = start shouldBe me.cference.hermesmq.domain.StartPosition.Earliest
+          ttl shouldBe Some(60.seconds)
+        case other => fail(s"unexpected command: $other")
+    }
+
+    "treat START_POSITION_UNSPECIFIED as NOW, so an old client keeps its behaviour" in {
+      // This is the load-bearing contract detail: UNSPECIFIED=0 means NOW, so a
+      // client generated before start_from existed sends zero and gets exactly
+      // its previous behaviour.
+      var seen: Option[SubscriptionCommand] = None
+      val subs = new SubscriptionService:
+        def submit(id: SubscriptionId, command: SubscriptionCommand): Future[CommandReply] =
+          seen = Some(command); Future.successful(CommandReply.Accepted)
+        def pull(id: SubscriptionId, max: Int): Future[Option[List[PulledMessage]]] = Future.successful(Some(Nil))
+      val _ = await(PubSubGrpcService(topics(), subs).createSubscription(
+        CreateSubscriptionRequest(subscriptionId = "s1", topicId = "orders")
+      ))
+      seen match
+        case Some(SubscriptionCommand.CreateSubscription(_, _, start, ttl)) =>
+          val _ = start shouldBe me.cference.hermesmq.domain.StartPosition.Now
+          ttl shouldBe None
+        case other => fail(s"unexpected command: $other")
+    }
+
+    "map a negative ttl_seconds to INVALID_ARGUMENT" in {
+      val svc = PubSubGrpcService(topics(), subs())
+      statusOfFailure(svc.createSubscription(
+        CreateSubscriptionRequest(subscriptionId = "s1", topicId = "orders", ttlSeconds = -5)
+      )) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+  }
