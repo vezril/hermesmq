@@ -67,7 +67,11 @@ final class PubSubGrpcService(
       case (Right(sid), Right(tid), Right(ttl)) =>
         val startFrom = startPositionOf(in.startFrom)
         subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid, startFrom, ttl)).flatMap {
-          case CommandReply.Accepted            => Future.successful(CreateSubscriptionResponse())
+          // Echo the position actually applied. A caller that asked for EARLIEST
+          // and reads back UNSPECIFIED is talking to a broker that dropped the
+          // field, and should treat its back-delivery as NOT having happened --
+          // that is the whole point of the field.
+          case CommandReply.Accepted            => Future.successful(CreateSubscriptionResponse(effectiveStartFrom = protoStartPosition(startFrom)))
           case CommandReply.Rejected(rejection) => Future.failed(GrpcErrors.rejected(rejection))
           case CommandReply.Published(_, _)     => Future.failed(new IllegalStateException("unexpected Published reply for CreateSubscription"))
         }
@@ -83,6 +87,11 @@ final class PubSubGrpcService(
   private def startPositionOf(raw: me.cference.hermesmq.grpc.StartPosition): me.cference.hermesmq.domain.StartPosition = raw match
     case me.cference.hermesmq.grpc.StartPosition.START_POSITION_EARLIEST => me.cference.hermesmq.domain.StartPosition.Earliest
     case _                                                        => me.cference.hermesmq.domain.StartPosition.Now
+
+  private def protoStartPosition(p: me.cference.hermesmq.domain.StartPosition): me.cference.hermesmq.grpc.StartPosition =
+    p match
+      case me.cference.hermesmq.domain.StartPosition.Earliest => me.cference.hermesmq.grpc.StartPosition.START_POSITION_EARLIEST
+      case me.cference.hermesmq.domain.StartPosition.Now      => me.cference.hermesmq.grpc.StartPosition.START_POSITION_NOW
 
   private def ttlOf(raw: Int): Either[String, Option[FiniteDuration]] =
     if raw < 0 then Left(s"ttl_seconds must not be negative, was $raw")

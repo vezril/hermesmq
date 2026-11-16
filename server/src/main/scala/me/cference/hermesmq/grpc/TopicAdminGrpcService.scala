@@ -40,8 +40,15 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
       ttlOf(in.ttlSeconds) match
         case Left(err) => Future.failed(GrpcErrors.invalid(ValidationError(err)))
         case Right(ttl) =>
-          submit(id, TopicCommand.UpdateTopic(in.labels, ttl)).map { _ =>
-            UpdateTopicResponse(topic = Some(Topic(topicId = id.value, labels = in.labels)))
+          // Read back rather than echo the request: `ttl_seconds = 0` means
+          // "leave untouched", so echoing the request would report 0 for a topic
+          // that still has a TTL -- confirming an update while misstating the
+          // very field it confirmed.
+          submit(id, TopicCommand.UpdateTopic(in.labels, ttl)).flatMap { _ =>
+            topics.query(id).map {
+              case Some(snap) => UpdateTopicResponse(topic = Some(toProto(snap)))
+              case None       => UpdateTopicResponse(topic = Some(Topic(topicId = id.value, labels = in.labels)))
+            }
           }
     }
 
@@ -73,4 +80,10 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
     }
 
   private def toProto(snap: TopicSnapshot): Topic =
-    Topic(topicId = snap.topicId.value, labels = snap.labels)
+    Topic(
+      topicId = snap.topicId.value,
+      labels = snap.labels,
+      // 0 = no topic TTL, matching the field's documented meaning. An old broker
+      // omits it and it decodes as 0, which is the same signal.
+      ttlSeconds = snap.ttl.fold(0)(d => d.toSeconds.toInt)
+    )

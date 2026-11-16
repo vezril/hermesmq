@@ -24,7 +24,16 @@ enum CommandReply:
   case Published(messageId: MessageId, deduplicated: Boolean)
 
 /** A read-only view of an active topic, returned by a query. */
-final case class TopicSnapshot(topicId: TopicId, labels: Map[String, String])
+/** `ttl` so the TTL settable on create/update is also READABLE: without it
+  * `GetTopic` cannot report it, and because `UpdateTopicRequest.ttl_seconds = 0`
+  * means "leave untouched", a caller could not discover the current value in
+  * order to decide what to send.
+  */
+final case class TopicSnapshot(
+    topicId: TopicId,
+    labels: Map[String, String],
+    ttl: Option[FiniteDuration] = None
+)
 
 /** Messages accepted by a [[TopicEntity]]: a write command (persist-then-reply)
   * or a non-persisting read query. The pure `decide` stays reply-agnostic; the

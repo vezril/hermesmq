@@ -121,3 +121,28 @@ final class TopicAdminGrpcServiceSpec extends AnyWordSpec with Matchers:
         case other                                  => fail(s"unexpected command: $other")
     }
   }
+
+  "the readable topic TTL (Lexicon task 2.4)" should {
+    "report the TTL on get" in {
+      val snap = TopicSnapshot(TopicId.from("orders").toOption.get, Map.empty, Some(3600.seconds))
+      val resp = await(service(topics(snap = Some(snap))).getTopic(GetTopicRequest(topicId = "orders")))
+      resp.topic.map(_.ttlSeconds) shouldBe Some(3600)
+    }
+
+    "report 0 for a topic with no TTL" in {
+      val snap = TopicSnapshot(TopicId.from("orders").toOption.get, Map.empty, None)
+      val resp = await(service(topics(snap = Some(snap))).getTopic(GetTopicRequest(topicId = "orders")))
+      resp.topic.map(_.ttlSeconds) shouldBe Some(0)
+    }
+
+    "read the TTL back on update rather than echoing the request" in {
+      // `ttl_seconds = 0` means "leave untouched", so echoing the request would
+      // report 0 for a topic that still has a TTL — confirming an update while
+      // misstating the very field it confirmed.
+      val snap = TopicSnapshot(TopicId.from("orders").toOption.get, Map.empty, Some(60.seconds))
+      val resp = await(service(topics(snap = Some(snap))).updateTopic(
+        UpdateTopicRequest(topicId = "orders", labels = Map("k" -> "v"), ttlSeconds = 0)
+      ))
+      resp.topic.map(_.ttlSeconds) shouldBe Some(60)
+    }
+  }
