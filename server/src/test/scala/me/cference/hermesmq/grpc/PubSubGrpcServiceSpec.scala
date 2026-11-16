@@ -372,3 +372,25 @@ final class PubSubGrpcServiceSpec extends ScalaTestWithActorTestKit with AnyWord
       )) shouldBe Status.Code.INVALID_ARGUMENT
     }
   }
+
+  "effective_start_from (Lexicon task 2.4)" should {
+    "echo EARLIEST when the broker honoured it" in {
+      val resp = await(service().createSubscription(CreateSubscriptionRequest(
+        subscriptionId = "s1",
+        topicId = "orders",
+        startFrom = me.cference.hermesmq.grpc.StartPosition.START_POSITION_EARLIEST
+      )))
+      // A caller comparing this against what it asked for can tell "honoured"
+      // from "silently downgraded by an old broker" (which returns UNSPECIFIED).
+      resp.effectiveStartFrom shouldBe me.cference.hermesmq.grpc.StartPosition.START_POSITION_EARLIEST
+    }
+
+    "echo NOW — never UNSPECIFIED — when the request defaulted" in {
+      val resp = await(service().createSubscription(
+        CreateSubscriptionRequest(subscriptionId = "s1", topicId = "orders")
+      ))
+      // Explicitly NOW, not UNSPECIFIED: UNSPECIFIED is reserved as the "this
+      // broker dropped the field" signal, so this broker must never emit it.
+      resp.effectiveStartFrom shouldBe me.cference.hermesmq.grpc.StartPosition.START_POSITION_NOW
+    }
+  }

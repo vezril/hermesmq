@@ -79,4 +79,4 @@ object TopicEntity:
 
   /** A read view of an active topic; `None` for a non-existent or deleted one. */
   private def snapshot(state: TopicState): Option[TopicSnapshot] =
-    state.topicId.filter(_ => state.active).map(id => TopicSnapshot(id, state.labels))
+    state.topicId.filter(_ => state.active).map(id => TopicSnapshot(id, state.labels, state.ttl))
