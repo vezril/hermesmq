@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 ThisBuild / organization := "me.cference.hermesmq"
-ThisBuild / scalaVersion := "3.3.4"
+ThisBuild / scalaVersion := "3.3.9"
 
 ThisBuild / homepage := Some(url("https://github.com/vezril/hermesmq"))
 ThisBuild / licenses := Seq("MIT" -> url("https://github.com/vezril/hermesmq/blob/main/LICENSE"))
