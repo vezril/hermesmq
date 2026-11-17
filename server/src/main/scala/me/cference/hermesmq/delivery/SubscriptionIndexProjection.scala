@@ -55,7 +55,7 @@ object SubscriptionIndexProjection:
     * rest. Both ends matter -- an index that only ever grows keeps handing
     * messages to a subscription that can no longer acknowledge them.
     */
-  def indexEvent(repository: TopicSubscriptionsRepository, event: SubscriptionEvent)(using ExecutionContext): Future[Unit] =
+  def indexEvent(repository: TopicSubscriptionsRepository, event: SubscriptionEvent): Future[Unit] =
     event match
       case SubscriptionEvent.SubscriptionCreated(subscriptionId, topicId, _, _) => repository.add(topicId, subscriptionId)
       case SubscriptionEvent.SubscriptionDeleted(subscriptionId, topicId) => repository.remove(topicId, subscriptionId)

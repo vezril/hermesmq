@@ -17,7 +17,6 @@ import org.apache.pekko.projection.scaladsl.SourceProvider
 
 import java.time.Instant
 import scala.concurrent.Await
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 
@@ -52,7 +51,7 @@ object DeadLetterIndexProjection:
       originTopic: Option[TopicId],
       deadLetteredAt: Instant,
       event: SubscriptionEvent
-  )(using ExecutionContext): Future[Unit] =
+  ): Future[Unit] =
     event match
       case SubscriptionEvent.MessageDeadLettered(_, message, attempt) =>
         repository.record(
@@ -91,12 +90,11 @@ object DeadLetterIndexProjection:
       projectionId = ProjectionId(ProjectionName, SubscriptionEntity.LeaseTag),
       sourceProvider = sourceProvider,
       sessionFactory = () => new HermesJdbcSession(dbConfig),
-      handler = () => new Handler(repository, subscriptions)(using system.executionContext)
+      handler = () => new Handler(repository, subscriptions)
     )(system)
 
-  private final class Handler(repository: DeadLetterRepository, subscriptions: TopicSubscriptionsRepository)(using
-      ExecutionContext
-  ) extends JdbcHandler[EventEnvelope[SubscriptionEvent], HermesJdbcSession]:
+  private final class Handler(repository: DeadLetterRepository, subscriptions: TopicSubscriptionsRepository)
+      extends JdbcHandler[EventEnvelope[SubscriptionEvent], HermesJdbcSession]:
 
     override def process(session: HermesJdbcSession, envelope: EventEnvelope[SubscriptionEvent]): Unit =
       subscriptionIdOf(envelope.persistenceId).foreach { subscriptionId =>
