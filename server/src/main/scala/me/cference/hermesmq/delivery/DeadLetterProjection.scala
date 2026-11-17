@@ -41,7 +41,8 @@ object DeadLetterProjection:
       dbConfig: DbConfig,
       topics: TopicService,
       subscriptions: TopicSubscriptionsRepository,
-      deadLetterTopic: Option[TopicId]
+      deadLetterTopic: Option[TopicId],
+      deadLetterOnExpiry: Boolean = false
   ) =
     val sourceProvider: SourceProvider[Offset, EventEnvelope[SubscriptionEvent]] =
       EventSourcedProvider.eventsByTag[SubscriptionEvent](
@@ -54,13 +55,14 @@ object DeadLetterProjection:
       projectionId = ProjectionId(ProjectionName, SubscriptionEntity.LeaseTag),
       sourceProvider = sourceProvider,
       sessionFactory = () => new HermesJdbcSession(dbConfig),
-      handler = () => new Handler(topics, subscriptions, deadLetterTopic)(using system.executionContext)
+      handler = () => new Handler(topics, subscriptions, deadLetterTopic, deadLetterOnExpiry)(using system.executionContext)
     )(system)
 
   private final class Handler(
       topics: TopicService,
       subscriptions: TopicSubscriptionsRepository,
-      deadLetterTopic: Option[TopicId]
+      deadLetterTopic: Option[TopicId],
+      deadLetterOnExpiry: Boolean
   )(using ExecutionContext)
       extends JdbcHandler[EventEnvelope[SubscriptionEvent], HermesJdbcSession]:
 
@@ -71,7 +73,10 @@ object DeadLetterProjection:
         // so this degrades to None rather than failing the envelope.
         val originTopic = Await.result(subscriptions.topicFor(subscriptionId), 10.seconds)
         val outcome =
-          Await.result(DeadLetterRouter.route(topics, deadLetterTopic, subscriptionId, originTopic, envelope.event), 10.seconds)
+          Await.result(
+            DeadLetterRouter.route(topics, deadLetterTopic, subscriptionId, originTopic, envelope.event, deadLetterOnExpiry),
+            10.seconds
+          )
         outcome match
           case DeadLetterOutcome.Published(topic, messageId) =>
             log.info("Dead-lettered message {} from {} republished to topic {}", messageId.value, subscriptionId.value, topic.value)

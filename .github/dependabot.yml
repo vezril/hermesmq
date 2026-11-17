@@ -13,13 +13,26 @@ updates:
     labels:
       - "dependencies"
     ignore:
-      # sbt 2.x needs its plugins republished for the sbt2_3 axis: this build
-      # pins sbt-scoverage 2.2.2 and sbt-scalafix 0.13.0, whose sbt-2 artifacts
-      # do not exist (they start at scoverage 2.4.x / scalafix 0.14.x). A major
-      # sbt bump is therefore a deliberate migration -- sbt + both plugins in
-      # one change -- not a weekly automated PR.
+      # sbt 2.x is a deliberate migration (build definition + plugin axis), not a
+      # weekly automated PR. The plugins are now current (sbt-scoverage 2.4.4,
+      # sbt-scalafix 0.14.10 as of #119), so the blocker is the migration itself
+      # rather than missing artifacts.
       - dependency-name: "org.scala-sbt:sbt"
         update-types: ["version-update:semver-major"]
+
+      # Stay on the Scala 3.3 LTS line. NOTE the version scheme: 3.3.x -> 3.10.x
+      # keeps the major at 3, so it is a semver-MINOR bump -- ignoring only
+      # majors would not hold the line, which is why minor is listed here.
+      # Patch updates within 3.3.x still flow through normally.
+      #
+      # Moving to a newer line is a deliberate migration with its own change:
+      # the README advertises 3.3 LTS, and a broker wants the conservative
+      # compiler line. Dependabot proposed 3.10.0 in #129; closed for this
+      # reason.
+      - dependency-name: "org.scala-lang:scala3-library_3"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "org.scala-lang:scala3-compiler_3"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # GitHub Actions pinned in the workflows.
   - package-ecosystem: "github-actions"

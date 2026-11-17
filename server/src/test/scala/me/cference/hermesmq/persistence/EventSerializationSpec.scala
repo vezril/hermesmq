@@ -9,6 +9,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 import java.time.Instant
+import scala.concurrent.duration.*
 
 /** Verifies domain events serialize with the explicit JSON serializer and that
   * Java serialization is disabled. Loads the real `application.conf` so the
@@ -110,6 +111,48 @@ final class EventSerializationSpec
       roundTrip[SubscriptionEvent](SubscriptionEvent.SubscriptionCreated(subId, topicId)) shouldBe
         SubscriptionEvent.SubscriptionCreated(subId, topicId)
     }
+    "round-trip SubscriptionCreated with an Earliest start position" in {
+      val event = SubscriptionEvent.SubscriptionCreated(subId, topicId, StartPosition.Earliest)
+      roundTrip[SubscriptionEvent](event) shouldBe event
+    }
+    "read a SubscriptionCreated journaled before startFrom existed as Now" in {
+      import JsonFormats.given
+      import spray.json.*
+      // Upgrade safety: a strict decoder here would make every subscription
+      // created before back-delivery shipped unrecoverable.
+      val legacy = """{"type":"SubscriptionCreated","subscriptionId":"sub-1","topicId":"orders"}"""
+      legacy.parseJson.convertTo[SubscriptionEvent] shouldBe
+        SubscriptionEvent.SubscriptionCreated(subId, topicId, StartPosition.Now)
+    }
+    "round-trip a topic and subscription TTL" in {
+      val tc = TopicEvent.TopicCreated(topicId, Map.empty, Some(3600.seconds))
+      val _  = roundTrip[TopicEvent](tc) shouldBe tc
+      val tu = TopicEvent.TopicTtlUpdated(topicId, Some(60.seconds))
+      val _  = roundTrip[TopicEvent](tu) shouldBe tu
+      val sc = SubscriptionEvent.SubscriptionCreated(subId, topicId, StartPosition.Now, Some(120.seconds))
+      roundTrip[SubscriptionEvent](sc) shouldBe sc
+    }
+
+    "read topic and subscription events journaled before TTLs existed as having none" in {
+      import JsonFormats.given
+      import spray.json.*
+      // A strict decoder here would make every pre-existing topic and
+      // subscription unrecoverable.
+      val legacyTopic = """{"type":"TopicCreated","topicId":"orders","labels":{}}"""
+      val _ = legacyTopic.parseJson.convertTo[TopicEvent] shouldBe TopicEvent.TopicCreated(topicId, Map.empty, None)
+      val legacySub = """{"type":"SubscriptionCreated","subscriptionId":"sub-1","topicId":"orders"}"""
+      val _ = legacySub.parseJson.convertTo[SubscriptionEvent] shouldBe
+        SubscriptionEvent.SubscriptionCreated(subId, topicId, StartPosition.Now, None)
+      // And an expiry event without a payload: droppable only, as it meant then.
+      val legacyExpiry = """{"type":"MessageExpired","ackId":"ack-1"}"""
+      legacyExpiry.parseJson.convertTo[SubscriptionEvent] shouldBe SubscriptionEvent.MessageExpired(ackId, None)
+    }
+
+    "round-trip MessageExpired carrying its payload" in {
+      val e = SubscriptionEvent.MessageExpired(ackId, Some(message))
+      roundTrip[SubscriptionEvent](e) shouldBe e
+    }
+
     "round-trip MessageDelivered" in {
       roundTrip[SubscriptionEvent](SubscriptionEvent.MessageDelivered(ackId, message)) shouldBe
         SubscriptionEvent.MessageDelivered(ackId, message)

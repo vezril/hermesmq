@@ -17,17 +17,19 @@ import spray.json.DefaultJsonProtocol
 import spray.json.RootJsonFormat
 
 import scala.concurrent.Future
+import scala.concurrent.duration.*
+import scala.concurrent.duration.FiniteDuration
 import scala.util.Failure
 import scala.util.Success
 
 /** JSON request/response models for the topic admin API. */
-final case class CreateTopicRequest(topicId: String, labels: Option[Map[String, String]])
-final case class UpdateTopicRequest(labels: Map[String, String])
+final case class CreateTopicRequest(topicId: String, labels: Option[Map[String, String]], ttlSeconds: Option[Int] = None)
+final case class UpdateTopicRequest(labels: Map[String, String], ttlSeconds: Option[Int] = None)
 final case class TopicResponse(topicId: String, labels: Map[String, String])
 
 object TopicAdminJson extends DefaultJsonProtocol:
-  given RootJsonFormat[CreateTopicRequest] = jsonFormat2(CreateTopicRequest.apply)
-  given RootJsonFormat[UpdateTopicRequest] = jsonFormat1(UpdateTopicRequest.apply)
+  given RootJsonFormat[CreateTopicRequest] = jsonFormat3(CreateTopicRequest.apply)
+  given RootJsonFormat[UpdateTopicRequest] = jsonFormat2(UpdateTopicRequest.apply)
   given RootJsonFormat[TopicResponse]      = jsonFormat2(TopicResponse.apply)
 
 /** REST admin endpoints for creating, reading, updating, and deleting topics.
@@ -46,11 +48,13 @@ final class TopicAdminRoutes(service: TopicService, principal: Principal = Topic
           post {
             requireAdmin {
               entity(as[CreateTopicRequest]) { req =>
-                withTopicId(req.topicId) { id =>
-                  completeWrite(
-                    service.submit(id, TopicCommand.CreateTopic(id, req.labels.getOrElse(Map.empty))),
-                    StatusCodes.Created
-                  )
+                withTtl(req.ttlSeconds) { ttl =>
+                  withTopicId(req.topicId) { id =>
+                    completeWrite(
+                      service.submit(id, TopicCommand.CreateTopic(id, req.labels.getOrElse(Map.empty), ttl)),
+                      StatusCodes.Created
+                    )
+                  }
                 }
               }
             }
@@ -69,7 +73,9 @@ final class TopicAdminRoutes(service: TopicService, principal: Principal = Topic
               patch {
                 requireAdmin {
                   entity(as[UpdateTopicRequest]) { req =>
-                    completeWrite(service.submit(id, TopicCommand.UpdateTopic(req.labels)), StatusCodes.OK)
+                    withTtl(req.ttlSeconds) { ttl =>
+                      completeWrite(service.submit(id, TopicCommand.UpdateTopic(req.labels, ttl)), StatusCodes.OK)
+                    }
                   }
                 }
               },
@@ -89,6 +95,17 @@ final class TopicAdminRoutes(service: TopicService, principal: Principal = Topic
     if principal.hasScope("admin") then inner else complete(StatusCodes.Forbidden)
 
   /** Validate a raw id into a `TopicId`, rejecting the reserved separator (400). */
+  /** A negative TTL is a `400`, not silently "no TTL": a caller who sends -1 is
+    * expressing something, and treating it as off would be a wrong answer with no
+    * signal. Zero means "no TTL", matching the global default's convention.
+    */
+  private def withTtl(raw: Option[Int])(inner: Option[FiniteDuration] => Route): Route =
+    raw match
+      case None                 => inner(None)
+      case Some(n) if n < 0     => complete(StatusCodes.BadRequest, "ttlSeconds must not be negative")
+      case Some(0)              => inner(None)
+      case Some(n)              => inner(Some(n.seconds))
+
   private def withTopicId(raw: String)(inner: TopicId => Route): Route =
     TenantScope.validateExternalId(raw).flatMap(TopicId.from) match
       case Right(id) => inner(id)

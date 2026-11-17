@@ -3,6 +3,7 @@ package me.cference.hermesmq.delivery
 import me.cference.hermesmq.domain.*
 import me.cference.hermesmq.persistence.TopicService
 
+import java.time.Instant
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
@@ -27,6 +28,14 @@ object DeadLetterRouter:
   val AttemptsHeader      = "x-delivery-attempts"
   val OriginalIdHeader    = "x-original-message-id"
   val OriginalTopicHeader = "x-original-topic"
+
+  /** Marks a dead-letter that got there by TTL expiry rather than by exhausting
+    * its delivery attempts. Without it the two are indistinguishable in the
+    * dead-letter topic, and they call for completely different operator
+    * responses: a redrive fixes an exhausted message, while an expired one is
+    * telling you the TTL or the consumer is wrong.
+    */
+  val ExpiredAtHeader = "x-expired-at"
 
   /** Build the dead-letter envelope for an exhausted original message.
     *
@@ -61,14 +70,52 @@ object DeadLetterRouter:
   /** React to one subscription event: republish an exhausted message to the
     * dead-letter topic, or drop it when none is configured.
     */
+  /** Build the dead-letter envelope for a message that expired under its TTL.
+    *
+    * Deliberately carries neither the attempt count nor an attempts header: the
+    * message did not fail delivery, it ran out of time, and reporting an attempt
+    * count would invite the wrong diagnosis.
+    */
+  def expiredMessage(
+      subscriptionId: SubscriptionId,
+      originTopic: Option[TopicId],
+      original: Message,
+      expiredAt: Instant
+  ): Either[ValidationError, Message] =
+    for
+      id <- MessageId.from(s"dead-letter:${subscriptionId.value}:${original.id.value}")
+      msg <- Message.from(
+        id,
+        original.payload.toArray,
+        original.attributes ++ Map(
+          SubscriptionHeader -> subscriptionId.value,
+          OriginalIdHeader   -> original.id.value,
+          ExpiredAtHeader    -> expiredAt.toString
+        ) ++ originTopic.map(t => OriginalTopicHeader -> t.value),
+        original.publishTime
+      )
+    yield msg
+
   def route(
       topics: TopicService,
       deadLetterTopic: Option[TopicId],
       subscriptionId: SubscriptionId,
       originTopic: Option[TopicId],
-      event: SubscriptionEvent
+      event: SubscriptionEvent,
+      deadLetterOnExpiry: Boolean = false,
+      now: Instant = Instant.now()
   )(using ExecutionContext): Future[DeadLetterOutcome] =
     event match
+      // An expiry only dead-letters when asked, and only when the event carries
+      // the payload (events journaled before this feature do not).
+      case SubscriptionEvent.MessageExpired(_, Some(message)) if deadLetterOnExpiry =>
+        deadLetterTopic match
+          case Some(topic) =>
+            expiredMessage(subscriptionId, originTopic, message, now) match
+              case Right(dl) =>
+                topics.submit(topic, TopicCommand.Publish(dl)).map(_ => DeadLetterOutcome.Published(topic, dl.id))
+              case Left(_) => Future.successful(DeadLetterOutcome.Dropped(subscriptionId, message.id))
+          case None => Future.successful(DeadLetterOutcome.Dropped(subscriptionId, message.id))
       case SubscriptionEvent.MessageDeadLettered(_, message, attempt) =>
         deadLetterTopic match
           case Some(topic) =>

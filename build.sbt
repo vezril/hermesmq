@@ -40,16 +40,16 @@ lazy val githubOwner = sys.env.getOrElse("GITHUB_REPOSITORY_OWNER", "vezril")
 
 lazy val pekkoVersion           = "1.2.0"
 lazy val pekkoHttpVersion       = "1.2.0"
-lazy val pekkoJdbcVersion       = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
+lazy val pekkoJdbcVersion       = "1.3.0"       // no 1.2.x release; core evicted to 1.2.0
 lazy val pekkoProjectionVersion = "1.1.0"       // no 1.2.x release; core evicted to 1.2.0
 lazy val scalaTestVersion       = "3.2.20"
 // The gRPC contract is sourced from the Lexicon (change adopt-lexicon-grpc-contracts);
 // pinned exactly so a mismatch is a build error. This must be the-lexicon release
 // that first ships `lexicon-hermes-grpc` (its add-hermes-grpc-contract, expected
 // v0.4.0). Verified locally against the byte-identical publishLocal stubs.
-lazy val lexiconVersion         = "0.8.0"
+lazy val lexiconVersion         = "0.9.0"
 lazy val logbackVersion         = "1.6.6"
-lazy val logstashLogbackVersion = "8.0"
+lazy val logstashLogbackVersion = "9.0"
 lazy val sprayJsonVersion       = "1.3.6"
 lazy val postgresVersion        = "42.7.14"
 lazy val testcontainersVersion  = "1.21.4"

@@ -78,4 +78,71 @@ final class TopicAdminGrpcServiceSpec extends AnyWordSpec with Matchers:
       val svc = service(topics(reply = CommandReply.Rejected(Rejection.TopicNotFound)))
       statusOfFailure(svc.deleteTopic(DeleteTopicRequest(topicId = "ghost"))) shouldBe Status.Code.NOT_FOUND
     }
+    // --- ttl_seconds (add-topic-subscription-ttl-and-start-position) ---
+
+    "forward a positive ttl_seconds on create to CreateTopic" in {
+      var seen: Option[TopicCommand] = None
+      val svc = TopicAdminGrpcService(new TopicService:
+        def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+          seen = Some(command); Future.successful(CommandReply.Accepted)
+        def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None))
+      val _ = await(svc.createTopic(CreateTopicRequest(topicId = "orders", ttlSeconds = 3600)))
+      seen match
+        case Some(TopicCommand.CreateTopic(_, _, ttl)) => ttl shouldBe Some(3600.seconds)
+        case other                                     => fail(s"unexpected command: $other")
+    }
+
+    "treat ttl_seconds = 0 as no TTL (the global default's convention)" in {
+      var seen: Option[TopicCommand] = None
+      val svc = TopicAdminGrpcService(new TopicService:
+        def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+          seen = Some(command); Future.successful(CommandReply.Accepted)
+        def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None))
+      val _ = await(svc.createTopic(CreateTopicRequest(topicId = "orders", ttlSeconds = 0)))
+      seen match
+        case Some(TopicCommand.CreateTopic(_, _, ttl)) => ttl shouldBe None
+        case other                                     => fail(s"unexpected command: $other")
+    }
+
+    "map a negative ttl_seconds to INVALID_ARGUMENT rather than silent off" in {
+      statusOfFailure(service(topics()).createTopic(CreateTopicRequest(topicId = "orders", ttlSeconds = -5))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+    }
+
+    "forward ttl_seconds on update to UpdateTopic" in {
+      var seen: Option[TopicCommand] = None
+      val svc = TopicAdminGrpcService(new TopicService:
+        def submit(id: TopicId, command: TopicCommand): Future[CommandReply] =
+          seen = Some(command); Future.successful(CommandReply.Accepted)
+        def query(id: TopicId): Future[Option[TopicSnapshot]] = Future.successful(None))
+      val _ = await(svc.updateTopic(UpdateTopicRequest(topicId = "orders", ttlSeconds = 60)))
+      seen match
+        case Some(TopicCommand.UpdateTopic(_, ttl)) => ttl shouldBe Some(60.seconds)
+        case other                                  => fail(s"unexpected command: $other")
+    }
+  }
+
+  "the readable topic TTL (Lexicon task 2.4)" should {
+    "report the TTL on get" in {
+      val snap = TopicSnapshot(TopicId.from("orders").toOption.get, Map.empty, Some(3600.seconds))
+      val resp = await(service(topics(snap = Some(snap))).getTopic(GetTopicRequest(topicId = "orders")))
+      resp.topic.map(_.ttlSeconds) shouldBe Some(3600)
+    }
+
+    "report 0 for a topic with no TTL" in {
+      val snap = TopicSnapshot(TopicId.from("orders").toOption.get, Map.empty, None)
+      val resp = await(service(topics(snap = Some(snap))).getTopic(GetTopicRequest(topicId = "orders")))
+      resp.topic.map(_.ttlSeconds) shouldBe Some(0)
+    }
+
+    "read the TTL back on update rather than echoing the request" in {
+      // `ttl_seconds = 0` means "leave untouched", so echoing the request would
+      // report 0 for a topic that still has a TTL — confirming an update while
+      // misstating the very field it confirmed.
+      val snap = TopicSnapshot(TopicId.from("orders").toOption.get, Map.empty, Some(60.seconds))
+      val resp = await(service(topics(snap = Some(snap))).updateTopic(
+        UpdateTopicRequest(topicId = "orders", labels = Map("k" -> "v"), ttlSeconds = 0)
+      ))
+      resp.topic.map(_.ttlSeconds) shouldBe Some(60)
+    }
   }

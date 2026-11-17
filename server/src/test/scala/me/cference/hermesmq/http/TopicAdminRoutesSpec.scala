@@ -101,3 +101,29 @@ final class TopicAdminRoutesSpec extends AnyWordSpec with Matchers with Scalates
       }
     }
   }
+
+  "topic ttlSeconds" should {
+    "accept a positive TTL on create" in {
+      Post("/v1/topics", jsonEntity("""{"topicId":"orders","ttlSeconds":3600}""")) ~> routes(stub()) ~> check {
+        status shouldBe StatusCodes.Created
+      }
+    }
+
+    "accept a TTL on update" in {
+      Patch("/v1/topics/orders", jsonEntity("""{"labels":{},"ttlSeconds":60}""")) ~> routes(stub()) ~> check {
+        status shouldBe StatusCodes.OK
+      }
+    }
+
+    "400 a negative TTL on create" in {
+      Post("/v1/topics", jsonEntity("""{"topicId":"orders","ttlSeconds":-5}""")) ~> routes(stub()) ~> check {
+        status shouldBe StatusCodes.BadRequest
+      }
+    }
+
+    "400 a negative TTL on update" in {
+      Patch("/v1/topics/orders", jsonEntity("""{"labels":{},"ttlSeconds":-5}""")) ~> routes(stub()) ~> check {
+        status shouldBe StatusCodes.BadRequest
+      }
+    }
+  }

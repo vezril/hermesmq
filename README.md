@@ -14,7 +14,7 @@ publish is acknowledged to the producer **only once its event is durably
 written**, and a restart replays the journal so accepted messages survive crashes
 and unacknowledged messages resume exactly where they left off. It runs as a
 single node or as a Pekko cluster over a shared journal, and is honest about its
-guarantees either way — see [Delivery guarantees](#delivery-guarantee-and-current-limits)
+guarantees either way — see [Delivery guarantees](#delivery-semantics)
 and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 
 > **Status:** feature-complete for its intended scope — every capability below is
@@ -53,6 +53,9 @@ and the [Roadmap](#roadmap) for what it deliberately does *not* promise.
 | Request tracing (correlation id at the boundary + carried on the bus) | ✅ Done |
 | Polyglot clients: Python 3 and JavaScript (ESM) alongside Scala | ✅ Done |
 | Dead-letter operations: non-destructive browse + idempotent redrive | ✅ Done |
+| Effectively-once consumption: stable `ackId` dedup contract, specified and tested | ✅ Done |
+| Back-delivery: opt-in `startFrom: earliest` replays a topic's retained history | ✅ Done |
+| Layered TTL (publish / topic / subscription / global, shortest wins) + dead-letter-on-expiry | ✅ Done |
 
 ## Roadmap
 
@@ -61,10 +64,8 @@ listed here so the guarantees are legible without reading the whole document:
 
 | Not implemented | Why / what it would take |
 |-----------------|--------------------------|
-| **Exactly-once delivery** | Delivery is at-least-once. Consumers must be idempotent. Exactly-once would need consumer-side transactional ack coupling, which the current ack protocol does not model. |
-| **Back-delivery to new subscriptions** | A subscription created *after* a message was published never receives it — delivery starts from the subscription's creation point, and journal retention means old events may already be purged. |
+| **Exactly-once delivery** — *not planned, and not possible* | Not a gap to be filled. A broker cannot make a consumer's side effects atomic with its ack, so it cannot know whether redelivery would duplicate work. HermesMQ offers at-least-once delivery with a stable `ackId` to deduplicate on — see [Delivery semantics](#delivery-semantics). |
 | **Rebuilding the topic→subscriptions index from the journal on restart** | The cluster-shared index is a durable read model maintained **forward** by a projection; it is not reconstructable from a from-zero replay once retention has purged events. |
-| **Per-topic / per-subscription TTL, and dead-letter-on-expiry** | TTL today is a global default plus a per-publish override, and expiry drops silently rather than leaving an audit trail. See [Message TTL](#message-ttl). |
 | **Cluster-wide aggregation of the consumer/producer gauges** | `hermesmq_subscription_consumers` and `hermesmq_topic_producers` are in-memory and **per-node** — exact on a single replica, partial across a cluster. The metric names and meanings would not change. |
 | **JWT/OIDC and mTLS auth** | Auth is static salted-hash API keys, to keep the broker dependency-light. `/metrics` is unauthenticated by design. See [Authentication](#authentication--multi-tenancy). |
 | **Versioned schema migrations** | Boot-time migration is idempotent *apply-the-current-schema*; destructive schema evolution would need a real migration tool. See [Schema self-migration](#schema-self-migration). |
@@ -220,9 +221,64 @@ curl -X POST localhost:8080/v1/topics/orders/messages \
   -H 'Content-Type: application/json' -d '{"payload":"stale-in-60s","ttlSeconds":60}'   # 202
 ```
 
-> **Future:** per-topic/per-subscription TTL and dead-letter-on-expiry (an audit trail
-> for expired messages) are natural next options; today TTL is a global default plus a
-> per-publish override, and expiry drops silently.
+**Four layers, and one rule: shortest wins.** A TTL may come from the publish
+(`ttlSeconds`), the topic, the receiving subscription, or the global default. The
+effective expiry is the **earliest** any of them implies — *any layer may shorten
+a message's lifetime, none may extend it.*
+
+```bash
+# A topic whose data is stale after an hour.
+curl -X POST localhost:8080/v1/topics \
+  -H 'Content-Type: application/json' -d '{"topicId":"orders","ttlSeconds":3600}'
+
+# A subscription that wants only fresh messages — shortens its own copy to 60s.
+curl -X POST localhost:8080/v1/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{"subscriptionId":"s1","topicId":"orders","ttlSeconds":60}'
+```
+
+That rule was chosen over the conventional "most specific wins" on purpose:
+most-specific would let a subscription keep a message alive past the point its
+topic declared the data stale, which inverts ownership. Shortest-wins fails in
+the safe direction — the surprise is earlier expiry, never unexpected retention.
+
+Two consequences worth knowing:
+
+- **Changing a topic's TTL is forward-looking.** A message's expiry is fixed when
+  it is published; already-published messages keep theirs. Likewise a
+  subscription's TTL is resolved at delivery, so changing it does not move the
+  expiry of messages it already holds.
+- **Two subscriptions on one topic can expire the same message at different
+  times**, because each resolves its own copy.
+
+| Variable              | Default | Description                                        |
+|-----------------------|---------|----------------------------------------------------|
+| `HERMESMQ_DEAD_LETTER_ON_EXPIRY`| `false` | Route expired messages to the dead-letter topic instead of dropping them |
+
+### Dead-letter-on-expiry
+
+TTL is deliberate data loss, and until now the broker performed it without
+leaving a trace. Two things change that:
+
+- **`HERMESMQ_DEAD_LETTER_ON_EXPIRY=true`** republishes an expired message to the
+  dead-letter topic instead of dropping it, carrying an **`x-expired-at`**
+  attribute. It deliberately carries *no* delivery-attempt attributes — the
+  message ran out of time, it did not fail delivery, and reporting an attempt
+  count would invite the wrong diagnosis. Expired dead-letters are immediately
+  visible through [dead-letter browse and redrive](#dead-letter-operations).
+- **`hermesmq_messages_expired_total{subscription}`** counts expiries whether
+  they are dropped or dead-lettered, so the volume is observable even with
+  dead-lettering off.
+
+Default is off: enabling it changes how much lands on your dead-letter topic, so
+it is opt-in rather than something to discover. Note also that the dead-letter
+topic is itself a topic — if you give *it* a TTL, dead-letters can expire too.
+That is not special-cased, because a silent exception there would be more
+surprising than the rule.
+
+A negative `ttlSeconds` on a topic or subscription is a `400`, not a silent "off":
+a caller sending `-1` is expressing something, and treating it as no-TTL would be
+a wrong answer with no signal.
 
 ### Idempotent publish
 
@@ -366,7 +422,7 @@ and survives restarts.
 | Method & path                          | Body                                   | Result |
 |-----------------------------------------|----------------------------------------|--------|
 | `POST /v1/topics/{id}/messages`         | `{"payload":"…","attributes":{…}}`     | `202` `{messageId}` · `404` · `400` |
-| `POST /v1/subscriptions`                | `{"subscriptionId":"s1","topicId":"orders"}` | `201` · `409` |
+| `POST /v1/subscriptions`                | `{"subscriptionId":"s1","topicId":"orders","startFrom":"now"\|"earliest"}` | `201` · `409` · `400` bad `startFrom` |
 | `DELETE /v1/subscriptions/{id}`         | —                                      | `204` · `404` |
 | `POST /v1/subscriptions/{id}/pull`      | `{"max":10}`                           | `200` `{messages:[{ackId,payload,attributes,publishTime}]}` · `404` |
 | `POST /v1/subscriptions/{id}/ack`       | `{"ackIds":["…"]}`                     | `200` `{acknowledged,unknown}` |
@@ -404,16 +460,93 @@ warning) if no topic is configured. Consumers can extend a lease with
 `modifyAckDeadline`, or nack for immediate redelivery by sending
 `ackDeadlineSeconds: 0`.
 
-### Delivery guarantee (and current limits)
+### Back-delivery to a new subscription
 
-**At-least-once.** The `ackId` is deterministic per `(subscription, message)`, so
-a projection replay re-delivers idempotently and does not duplicate an
-outstanding message — but a consumer must still tolerate seeing a message twice.
+By default a subscription receives only messages published **after** it was
+created — `startFrom: "now"`, which is what every subscription did before this
+option existed. Pass `"earliest"` to have the broker deliver the messages already
+in the topic's journal:
+
+```bash
+curl -X POST localhost:8080/v1/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{"subscriptionId":"s1","topicId":"orders","startFrom":"earliest"}'   # 201
+```
+
+Three things to know before relying on it:
+
+- **`earliest` means earliest *still retained*.** Snapshot retention
+  (`HERMESMQ_SNAPSHOT_KEEP`) deletes journal events behind the retained
+  snapshots, so on a long-lived topic this is not "everything ever published".
+  Purged messages are simply absent — no error, no warning.
+- **It is asynchronous.** The back-delivery runs off the journal in the
+  subscription-index projection, not inside your `POST`. A client that creates an
+  `earliest` subscription and immediately pulls may get nothing yet.
+- **It happens at most once per subscription**, guarded by a durable marker
+  rather than by delivery idempotency. That distinction matters: `RecordDelivery`
+  de-duplicates only while a message is still *outstanding*, so once your
+  consumer acks a back-delivered message there is nothing left to collide with —
+  without the marker, a projection replay would hand you the whole backfill
+  again.
+
+Expired messages are skipped (a TTL that lapsed while the message sat in the
+journal is still lapsed), and a back-delivered message is otherwise
+indistinguishable from a live one: same payload, attributes, correlation id, and
+the same `(subscription, message)`-derived `ackId`.
+
+**REST only for now.** The gRPC `CreateSubscriptionRequest` comes from the pinned
+Lexicon artifact, so `start_from` needs a change in
+[the Lexicon](https://github.com/vezril/the-lexicon) and a pin bump here.
+gRPC-created subscriptions behave as `now`, unchanged.
+
+### Delivery semantics
+
+**At-least-once delivery, effectively-once processing.** Those are two different
+statements and the distinction is the whole contract, so it is worth being
+precise about both.
+
+**What the broker guarantees.** Every published message is delivered to every
+subscription on its topic at least once, and each delivery carries an `ackId`
+that is a pure function of `(subscription, message)`. The same message
+redelivered to the same subscription — after an ack-deadline lapse, after a nack,
+or after a projection replay — carries the **identical** `ackId` every time. The
+broker never mints a fresh key per attempt.
+
+**What the broker does not guarantee: exactly-once.** It is not a missing
+feature; it is not achievable by a broker of this shape. Consider a consumer that
+writes to its own database and then crashes before its ack arrives. The broker
+cannot observe that the write happened, so it must redeliver — and if it instead
+assumed the work was done, it would lose messages. No protocol the broker
+controls resolves this, because the consumer's side effects are not in the
+broker's transaction. Any system claiming exactly-once is either doing
+consumer-side deduplication under a friendlier name, or owns the consumer's
+storage (as Kafka does within its own log).
+
+**So: deduplicate on the `ackId`.** That is what makes at-least-once usable:
+
+```scala
+// Consumer side. The processed set is yours; its retention horizon is the
+// redelivery window you care about, not forever.
+val msgs = client.pull(subscriptionId, max = 10).futureValue
+msgs.foreach { m =>
+  if !alreadyProcessed(m.ackId) then
+    handle(m)                 // your side effect
+    markProcessed(m.ackId)    // in the SAME transaction as the side effect, ideally
+}
+client.ack(subscriptionId, msgs.map(_.ackId))
+```
+
+Put `markProcessed` in the same transaction as your side effect and repeats cost
+nothing. End to end, pair it with `idempotencyKey` on
+[publish](#idempotent-publish) so a producer retry does not create a second
+message in the first place: dedup at the producer boundary, dedup at the consumer
+boundary, at-least-once in between.
+
 REST payloads are treated as UTF-8 text.
 
-The guarantees HermesMQ does **not** offer — exactly-once, back-delivery to
-subscriptions created after a publish, and from-zero reconstruction of the
-subscription index — are listed with their rationale in the [Roadmap](#roadmap).
+Two guarantees HermesMQ genuinely does not offer — back-delivery to subscriptions
+created after a publish, and from-zero reconstruction of the subscription index —
+are in the [Roadmap](#roadmap) with their rationale.
 
 ## gRPC API
 
@@ -517,14 +650,18 @@ Exposed metrics:
 | `hermesmq_subscription_consumers` | gauge | `subscription` | Distinct named consumers active within the window |
 | `hermesmq_publish_deduplicated_total` | counter | `topic` | Publishes collapsed as duplicates (per-node, best-effort) |
 | `hermesmq_topic_producers` | gauge | `topic` | Distinct named producers active within the window (per-node) |
+| `hermesmq_messages_expired_total` | counter | `subscription` | Messages expired under their TTL (counted whether dropped or dead-lettered) |
 
 ```bash
 curl localhost:8080/v1/subscriptions   # [{"subscriptionId":"s1","backlog":2,...}]
 curl localhost:8080/metrics            # hermesmq_subscription_backlog{subscription="s1"} 2 ...
 ```
 
-The stats projections use exactly-once processing so counters are never
-double-counted on replay. Counts are maintained **forward**: because journal
+The stats projections use Pekko Projection's **exactly-once** mode so counters
+are never double-counted on replay — the counter update and the offset commit
+land in one transaction. That is a different claim from message delivery, and
+achievable for the same reason delivery's isn't: here the broker owns both sides
+of the transaction. See [Delivery semantics](#delivery-semantics). Counts are maintained **forward**: because journal
 retention purges old events, these read models cannot be rebuilt from a
 from-zero replay once events are deleted — the projections run continuously from
 first start, so live counts stay accurate.

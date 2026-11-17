@@ -4,12 +4,15 @@ import me.cference.hermesmq.auth.TenantScope
 import me.cference.hermesmq.domain.Rejection
 import me.cference.hermesmq.domain.TopicCommand
 import me.cference.hermesmq.domain.TopicId
+import me.cference.hermesmq.domain.ValidationError
 import me.cference.hermesmq.persistence.CommandReply
 import me.cference.hermesmq.persistence.TopicService
 import me.cference.hermesmq.persistence.TopicSnapshot
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.concurrent.duration.*
+import scala.concurrent.duration.FiniteDuration
 
 /** gRPC handler for topic administration. Implements the generated
   * [[TopicAdminService]] trait by delegating to the same [[TopicService]] the REST
@@ -19,7 +22,9 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
 
   def createTopic(in: CreateTopicRequest): Future[CreateTopicResponse] =
     withTopicId(in.topicId) { id =>
-      submit(id, TopicCommand.CreateTopic(id, in.labels)).map(_ => CreateTopicResponse())
+      ttlOf(in.ttlSeconds) match
+        case Left(err)  => Future.failed(GrpcErrors.invalid(ValidationError(err)))
+        case Right(ttl) => submit(id, TopicCommand.CreateTopic(id, in.labels, ttl)).map(_ => CreateTopicResponse())
     }
 
   def getTopic(in: GetTopicRequest): Future[GetTopicResponse] =
@@ -32,15 +37,33 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
 
   def updateTopic(in: UpdateTopicRequest): Future[UpdateTopicResponse] =
     withTopicId(in.topicId) { id =>
-      submit(id, TopicCommand.UpdateTopic(in.labels)).map { _ =>
-        UpdateTopicResponse(topic = Some(Topic(topicId = id.value, labels = in.labels)))
-      }
+      ttlOf(in.ttlSeconds) match
+        case Left(err) => Future.failed(GrpcErrors.invalid(ValidationError(err)))
+        case Right(ttl) =>
+          // Read back rather than echo the request: `ttl_seconds = 0` means
+          // "leave untouched", so echoing the request would report 0 for a topic
+          // that still has a TTL -- confirming an update while misstating the
+          // very field it confirmed.
+          submit(id, TopicCommand.UpdateTopic(in.labels, ttl)).flatMap { _ =>
+            topics.query(id).map {
+              case Some(snap) => UpdateTopicResponse(topic = Some(toProto(snap)))
+              case None       => UpdateTopicResponse(topic = Some(Topic(topicId = id.value, labels = in.labels)))
+            }
+          }
     }
 
   def deleteTopic(in: DeleteTopicRequest): Future[DeleteTopicResponse] =
     withTopicId(in.topicId) { id =>
       submit(id, TopicCommand.DeleteTopic).map(_ => DeleteTopicResponse())
     }
+
+  /** Zero means "no TTL" (matching the global default's convention); negative is
+    * INVALID_ARGUMENT rather than silently off, matching the REST surface's rule.
+    */
+  private def ttlOf(raw: Int): Either[String, Option[FiniteDuration]] =
+    if raw < 0 then Left(s"ttl_seconds must not be negative, was $raw")
+    else if raw == 0 then Right(None)
+    else Right(Some(raw.seconds))
 
   /** Parse a topic id (blank/invalid → INVALID_ARGUMENT) then run `f`. */
   private def withTopicId[A](raw: String)(f: TopicId => Future[A]): Future[A] =
@@ -57,4 +80,10 @@ final class TopicAdminGrpcService(topics: TopicService)(using ExecutionContext) 
     }
 
   private def toProto(snap: TopicSnapshot): Topic =
-    Topic(topicId = snap.topicId.value, labels = snap.labels)
+    Topic(
+      topicId = snap.topicId.value,
+      labels = snap.labels,
+      // 0 = no topic TTL, matching the field's documented meaning. An old broker
+      // omits it and it decodes as 0, which is the same signal.
+      ttlSeconds = snap.ttl.fold(0)(d => d.toSeconds.toInt)
+    )

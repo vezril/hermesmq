@@ -35,7 +35,15 @@ final case class PublishRequest(
     producerId: Option[String] = None
 )
 final case class PublishResponse(messageId: String, deduplicated: Boolean = false)
-final case class CreateSubscriptionRequest(subscriptionId: String, topicId: String)
+/** `startFrom` is `"now"` (default) or `"earliest"`. Absent means `now`, so a
+  * request written before back-delivery existed behaves identically.
+  */
+final case class CreateSubscriptionRequest(
+    subscriptionId: String,
+    topicId: String,
+    startFrom: Option[String] = None,
+    ttlSeconds: Option[Int] = None
+)
 final case class PullRequest(max: Option[Int], consumerId: Option[String] = None)
 final case class PulledMessageJson(
     ackId: String,
@@ -53,7 +61,7 @@ final case class ModifyAckDeadlineResponse(modified: List[String], unknown: List
 object PubSubJson extends DefaultJsonProtocol:
   given RootJsonFormat[PublishRequest]            = jsonFormat5(PublishRequest.apply)
   given RootJsonFormat[PublishResponse]           = jsonFormat2(PublishResponse.apply)
-  given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat2(CreateSubscriptionRequest.apply)
+  given RootJsonFormat[CreateSubscriptionRequest] = jsonFormat4(CreateSubscriptionRequest.apply)
   given RootJsonFormat[PullRequest]               = jsonFormat2(PullRequest.apply)
   given RootJsonFormat[PulledMessageJson]         = jsonFormat5(PulledMessageJson.apply)
   given RootJsonFormat[PullResponse]              = jsonFormat1(PullResponse.apply)
@@ -118,16 +126,20 @@ final class PubSubRoutes(
               entity(as[CreateSubscriptionRequest]) { req =>
                 (
                   TenantScope.validateExternalId(req.subscriptionId).flatMap(SubscriptionId.from),
-                  TenantScope.validateExternalId(req.topicId).flatMap(TopicId.from)
+                  TenantScope.validateExternalId(req.topicId).flatMap(TopicId.from),
+                  startPositionOf(req.startFrom),
+                  ttlOf(req.ttlSeconds)
                 ) match
-                  case (Right(sid), Right(tid)) =>
-                    onComplete(subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid))) {
+                  case (Right(sid), Right(tid), Right(startFrom), Right(ttl)) =>
+                    onComplete(subscriptions.submit(sid, SubscriptionCommand.CreateSubscription(sid, tid, startFrom, ttl))) {
                       case Success(CommandReply.Accepted)       => complete(StatusCodes.Created)
                       case Success(CommandReply.Rejected(_))    => complete(StatusCodes.Conflict)
                       case Success(CommandReply.Published(_, _)) => complete(StatusCodes.InternalServerError)
                       case Failure(_)                        => complete(StatusCodes.ServiceUnavailable)
                     }
-                  case _ => complete(StatusCodes.BadRequest, "invalid subscriptionId or topicId")
+                  case (_, _, Left(err), _) => complete(StatusCodes.BadRequest, err)
+                  case (_, _, _, Left(err)) => complete(StatusCodes.BadRequest, err)
+                  case _                    => complete(StatusCodes.BadRequest, "invalid subscriptionId or topicId")
               }
             }
           },
@@ -195,6 +207,26 @@ final class PubSubRoutes(
         )
       }
     )
+
+  /** An unrecognised start position is a `400` rather than a silent fallback to
+    * `now`: a caller who misspells `earliest` is asking for back-delivery and
+    * would otherwise get none, with no indication why.
+    */
+  private def startPositionOf(raw: Option[String]): Either[String, StartPosition] =
+    raw.map(_.trim.toLowerCase) match
+      case None | Some("") | Some("now") => Right(StartPosition.Now)
+      case Some("earliest")              => Right(StartPosition.Earliest)
+      case Some(other)                   => Left(s"invalid startFrom '$other' (expected \"now\" or \"earliest\")")
+
+  /** Zero means "no TTL" (the global default's convention); negative is a `400`
+    * rather than silently off.
+    */
+  private def ttlOf(raw: Option[Int]): Either[String, Option[FiniteDuration]] =
+    raw match
+      case None             => Right(None)
+      case Some(n) if n < 0 => Left("ttlSeconds must not be negative")
+      case Some(0)          => Right(None)
+      case Some(n)          => Right(Some(n.seconds))
 
   private def withSubId(raw: String)(inner: SubscriptionId => Route): Route =
     TenantScope.validateExternalId(raw).flatMap(SubscriptionId.from) match

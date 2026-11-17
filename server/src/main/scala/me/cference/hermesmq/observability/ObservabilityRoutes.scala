@@ -20,12 +20,13 @@ final case class SubscriptionStatsJson(
     backlog: Int,
     oldestUnackedAgeSeconds: Long,
     redeliveredTotal: Long,
-    deadLetteredTotal: Long
+    deadLetteredTotal: Long,
+    expiredTotal: Long
 )
 final case class TopicStatsJson(topicId: String, publishedTotal: Long, deleted: Boolean)
 
 object ObservabilityJson extends DefaultJsonProtocol:
-  given RootJsonFormat[SubscriptionStatsJson] = jsonFormat6(SubscriptionStatsJson.apply)
+  given RootJsonFormat[SubscriptionStatsJson] = jsonFormat7(SubscriptionStatsJson.apply)
   given RootJsonFormat[TopicStatsJson]        = jsonFormat3(TopicStatsJson.apply)
 
 /** Observability endpoints, reading the stats read models off the hot path:
@@ -98,7 +99,8 @@ final class ObservabilityRoutes(
       s.backlog,
       s.oldestUnackedAgeSeconds(at),
       s.redeliveredTotal,
-      s.deadLetteredTotal
+      s.deadLetteredTotal,
+      s.expiredTotal
     )
 
   private def toJson(scope: TenantScope, principal: Principal)(t: TopicStats): TopicStatsJson =

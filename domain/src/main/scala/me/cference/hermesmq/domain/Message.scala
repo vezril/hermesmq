@@ -28,6 +28,19 @@ final case class Message private (
   /** True when this message has a TTL that has been reached at `now`. */
   def expired(now: Instant): Boolean = expireTime.exists(!_.isAfter(now))
 
+  /** Bring this message's expiry forward to `at`, if that is earlier (or if it
+    * had none). Never pushes an expiry out.
+    *
+    * Lives here rather than being a `copy` at the call site because the
+    * constructor is private on purpose: the shortest-wins rule is an invariant of
+    * the type, and expressing it here means no caller can accidentally extend a
+    * message's life.
+    */
+  def withExpiryNoLaterThan(at: Instant): Message =
+    expireTime match
+      case Some(existing) if existing.isBefore(at) => this
+      case _                                       => copy(expireTime = Some(at))
+
 object Message:
 
   /** Construct a validated message. The `payload` array and `attributes` map are
