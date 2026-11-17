@@ -16,5 +16,5 @@ final class AckDeadlineSpec extends AnyFunSuite:
   }
 
   test("a negative deadline is rejected") {
-    assert(AckDeadline.from(-1.second).isLeft)
+    assert(AckDeadline.from((-1).second).isLeft)
   }

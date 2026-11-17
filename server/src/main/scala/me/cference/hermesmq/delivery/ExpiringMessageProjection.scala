@@ -15,7 +15,6 @@ import org.apache.pekko.projection.jdbc.scaladsl.JdbcProjection
 import org.apache.pekko.projection.scaladsl.SourceProvider
 
 import scala.concurrent.Await
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 
@@ -29,8 +28,10 @@ object ExpiringMessageProjection:
   private val ProjectionName = "subscription-expiry-index"
 
   /** The per-event effect on the expiring-message read model. */
-  def indexEvent(repository: ExpiringMessageRepository, subscriptionId: SubscriptionId, event: SubscriptionEvent)(using
-      ExecutionContext
+  def indexEvent(
+      repository: ExpiringMessageRepository,
+      subscriptionId: SubscriptionId,
+      event: SubscriptionEvent
   ): Future[Unit] =
     event match
       case SubscriptionEvent.MessageDelivered(ackId, message) =>
@@ -57,10 +58,10 @@ object ExpiringMessageProjection:
       projectionId = ProjectionId(ProjectionName, SubscriptionEntity.StatsTag),
       sourceProvider = sourceProvider,
       sessionFactory = () => new HermesJdbcSession(dbConfig),
-      handler = () => new Handler(repository)(using system.executionContext)
+      handler = () => new Handler(repository)
     )(system)
 
-  private final class Handler(repository: ExpiringMessageRepository)(using ExecutionContext)
+  private final class Handler(repository: ExpiringMessageRepository)
       extends JdbcHandler[EventEnvelope[SubscriptionEvent], HermesJdbcSession]:
 
     override def process(session: HermesJdbcSession, envelope: EventEnvelope[SubscriptionEvent]): Unit =
