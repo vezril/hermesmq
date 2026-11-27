@@ -48,7 +48,7 @@ lazy val scalaTestVersion       = "3.2.20"
 // that first ships `lexicon-hermes-grpc` (its add-hermes-grpc-contract, expected
 // v0.4.0). Verified locally against the byte-identical publishLocal stubs.
 lazy val lexiconVersion         = "0.9.0"
-lazy val logbackVersion         = "1.6.7"
+lazy val logbackVersion         = "1.6.8"
 lazy val logstashLogbackVersion = "9.0"
 lazy val sprayJsonVersion       = "1.3.6"
 lazy val postgresVersion        = "42.7.14"
